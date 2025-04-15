@@ -73,8 +73,18 @@ public class MLXEmbedder: @unchecked Sendable {
         normalize: true, applyLayerNorm: true
       ).eval()
       
-      // Convert to Float arrays
-      return result.map { $0.asArray(Float.self) }
+      // Convert to Float arrays - handle the result appropriately based on its type
+      if let multiDimensionalArray = result as? [MLXArray] {
+          return multiDimensionalArray.map { $0.asArray(Float.self) }
+      } else if let singleArray = result as? MLXArray {
+          // If it's a single MLXArray that contains multiple embeddings
+          return singleArray.dimensions.count > 1 
+              ? (0..<singleArray.shape[0]).map { singleArray[$0].asArray(Float.self) }
+              : [singleArray.asArray(Float.self)]
+      } else {
+          // Fallback to empty result if the structure is unexpected
+          return []
+      }
     }
   }
 
