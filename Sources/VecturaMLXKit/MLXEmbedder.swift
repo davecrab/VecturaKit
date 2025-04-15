@@ -53,19 +53,10 @@ public class MLXEmbedder: @unchecked Sendable {
       var maxLength = inputs.reduce(into: 16) { acc, elem in
         acc = max(acc, elem.count)
       }
-      // NOTE: Currently, documents exceeding the token limit are truncated, not split.
-      // This means that if a document is longer than defaultMaxLength tokens, 
-      // only the first defaultMaxLength tokens are processed, and the rest are discarded.
-      //
-      // TODO: Future enhancement - implement document splitting for large texts:
-      // - Split texts exceeding maxTokenLength into multiple chunks with some overlap
-      // - Process each chunk separately and store as separate documents or
-      // - Generate embeddings for each chunk and average/combine them
       maxLength = min(maxLength, self.defaultMaxLength)
 
-      // Create a strong reference to store all MLXArrays to ensure they stay in memory 
-      // during the entire operation
-      var strongReferences = [MLXArray]()
+      // Create a strong reference collection to keep all MLXArrays alive during processing
+      var arrayKeepAlive: [Any] = []
       
       // Process inputs in smaller groups if needed
       var paddedInputs: [MLXArray] = []
@@ -85,33 +76,33 @@ public class MLXEmbedder: @unchecked Sendable {
         
         let mlxArray = MLXArray(paddedElements)
         paddedInputs.append(mlxArray)
-        strongReferences.append(mlxArray) // Keep a strong reference
+        arrayKeepAlive.append(mlxArray) // Keep a strong reference
       }
       
       // Stack arrays into a single batch
       let padded = stacked(paddedInputs)
-      strongReferences.append(padded) // Keep a strong reference to padded
+      arrayKeepAlive.append(padded) // Keep a strong reference
       
-      // Keep mask and tokenTypes in strong references too
+      // Keep mask and tokenTypes objects alive too
       let mask = (padded .!= tokenizer.eosTokenId ?? 0)
-      strongReferences.append(mask)
+      arrayKeepAlive.append(mask)
       
       let tokenTypes = MLXArray.zeros(like: padded)
-      strongReferences.append(tokenTypes)
+      arrayKeepAlive.append(tokenTypes)
 
-      // Run the model with attention mask
-      let embeddings = model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask)
-      strongReferences.append(embeddings) // Keep a strong reference
+      // Run the model - it returns EmbeddingModelOutput, not MLXArray
+      let modelOutput = model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask)
+      arrayKeepAlive.append(modelOutput) // Keep the output strongly referenced too
       
       // Apply pooling
-      let result = pooling(embeddings, normalize: true, applyLayerNorm: true)
-      strongReferences.append(result) // Keep a strong reference
+      let result = pooling(modelOutput, normalize: true, applyLayerNorm: true)
+      arrayKeepAlive.append(result) // Keep a strong reference
       
-      // Process results
+      // Convert to Float arrays
       let floatArrays = result.map { $0.asArray(Float.self) }
       
       // Keep references alive until we're done
-      _ = strongReferences
+      _ = arrayKeepAlive
       
       return floatArrays
     }
