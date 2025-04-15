@@ -123,6 +123,104 @@ public class VecturaMLXKit {
         return ids
     }
     
+    /// Adds multiple documents with pre-computed embeddings to the vector store in batch.
+    ///
+    /// This method is useful when you generate embeddings externally (e.g., using OpenAI, Ollama, 
+    /// or any other embedding provider) and want to store them in VecturaMLXKit.
+    ///
+    /// - Parameters:
+    ///   - texts: The text contents of the documents.
+    ///   - embeddings: Pre-computed embeddings for the documents.
+    ///   - ids: Optional unique identifiers for the documents.
+    /// - Returns: The IDs of the added documents.
+    public func addDocumentsWithEmbeddings(
+        texts: [String],
+        embeddings: [[Float]],
+        ids: [UUID]? = nil
+    ) async throws -> [UUID] {
+        if let ids = ids, ids.count != texts.count {
+            throw VecturaError.invalidInput("Number of IDs must match number of texts")
+        }
+        
+        if texts.count != embeddings.count {
+            throw VecturaError.invalidInput("Number of texts must match number of embeddings")
+        }
+        
+        // Check dimension of the embeddings
+        for embedding in embeddings {
+            if embedding.count != config.dimension {
+                throw VecturaError.dimensionMismatch(
+                    expected: config.dimension,
+                    got: embedding.count
+                )
+            }
+        }
+        
+        // Pre-create the document IDs
+        let documentIds = ids ?? texts.map { _ in UUID() }
+        
+        var documentsToSave = [VecturaDocument]()
+        documentsToSave.reserveCapacity(texts.count)
+        
+        // Preallocate a buffer for normalized embeddings
+        var normalizedBuffer = [Float](repeating: 0, count: config.dimension)
+        
+        // Process all documents
+        for i in 0..<texts.count {
+            let docId = documentIds[i]
+            let doc = VecturaDocument(id: docId, text: texts[i], embedding: embeddings[i])
+            
+            // Normalize embedding for cosine similarity (reusing buffer)
+            let norm = l2Norm(doc.embedding)
+            var divisor = norm + 1e-9
+            vDSP_vsdiv(doc.embedding, 1, &divisor, &normalizedBuffer, 1, vDSP_Length(doc.embedding.count))
+            
+            // Create a copy of the normalized buffer for storage
+            normalizedEmbeddings[doc.id] = Array(normalizedBuffer)
+            documents[doc.id] = doc
+            documentsToSave.append(doc)
+        }
+        
+        // Perform file operations in parallel with a reasonable chunk size
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            let directory = self.storageDirectory
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            
+            for doc in documentsToSave {
+                group.addTask {
+                    let documentURL = directory.appendingPathComponent("\(doc.id).json")
+                    let data = try encoder.encode(doc)
+                    try data.write(to: documentURL)
+                }
+            }
+            
+            try await group.waitForAll()
+        }
+        
+        return documentIds
+    }
+    
+    /// Adds a single document with a pre-computed embedding to the vector store.
+    ///
+    /// - Parameters:
+    ///   - text: The text content of the document.
+    ///   - embedding: Pre-computed embedding for the document.
+    ///   - id: Optional unique identifier for the document.
+    /// - Returns: The ID of the added document.
+    public func addDocumentWithEmbedding(
+        text: String,
+        embedding: [Float],
+        id: UUID? = nil
+    ) async throws -> UUID {
+        let ids = try await addDocumentsWithEmbeddings(
+            texts: [text],
+            embeddings: [embedding],
+            ids: id.map { [$0] }
+        )
+        return ids[0]
+    }
+    
     public func search(query: String, numResults: Int? = nil, threshold: Float? = nil) async throws
     -> [VecturaSearchResult]
     {
@@ -147,6 +245,66 @@ public class VecturaMLXKit {
         
         // Use Accelerate framework for batch processing if appropriate
         // For now, process each document individually but with optimizations
+        for doc in documents.values {
+            guard let normDoc = normalizedEmbeddings[doc.id] else { continue }
+            let similarity = dotProduct(normalizedQuery, normDoc)
+            
+            if similarity < minThreshold {
+                continue
+            }
+            
+            results.append(
+                VecturaSearchResult(
+                    id: doc.id,
+                    text: doc.text,
+                    score: similarity,
+                    createdAt: doc.createdAt
+                )
+            )
+        }
+        
+        results.sort { $0.score > $1.score }
+        
+        let limit = numResults ?? config.searchOptions.defaultNumResults
+        return results.count <= limit ? results : Array(results.prefix(limit))
+    }
+    
+    /// Searches for documents using a pre-computed query embedding from an external source.
+    ///
+    /// This method is useful when using embeddings generated by external services like OpenAI, Ollama,
+    /// or any other external embedding provider, allowing you to leverage these embeddings with VecturaMLXKit.
+    ///
+    /// - Parameters:
+    ///   - queryEmbedding: A pre-computed embedding for the query from an external source.
+    ///   - numResults: Maximum number of results to return.
+    ///   - threshold: Minimum similarity threshold.
+    /// - Returns: An array of search results ordered by similarity.
+    public func searchWithExternalEmbedding(
+        queryEmbedding: [Float],
+        numResults: Int? = nil,
+        threshold: Float? = nil
+    ) async throws -> [VecturaSearchResult] {
+        if queryEmbedding.count != config.dimension {
+            throw VecturaError.dimensionMismatch(
+                expected: config.dimension,
+                got: queryEmbedding.count
+            )
+        }
+        
+        // Normalize the query vector
+        let norm = l2Norm(queryEmbedding)
+        var divisorQuery = norm + 1e-9
+        var normalizedQuery = [Float](repeating: 0, count: queryEmbedding.count)
+        vDSP_vsdiv(
+            queryEmbedding, 1, &divisorQuery, &normalizedQuery, 1, vDSP_Length(queryEmbedding.count))
+        
+        // Optimize for large document collections
+        var results: [VecturaSearchResult] = []
+        results.reserveCapacity(min(documents.count, numResults ?? config.searchOptions.defaultNumResults))
+        
+        let minThreshold = threshold ?? config.searchOptions.minThreshold ?? 0
+        
+        // Process each document individually but with optimizations
         for doc in documents.values {
             guard let normDoc = normalizedEmbeddings[doc.id] else { continue }
             let similarity = dotProduct(normalizedQuery, normDoc)

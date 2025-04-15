@@ -251,6 +251,27 @@ VecturaMLXKit harnesses Apple's MLX framework for accelerated processing, delive
     let documentIds = try await vectorDB.addDocuments(texts: texts)
     ```
 
+    **Using External Embeddings with VecturaMLXKit:**
+    
+    ```swift
+    // Pre-computed embeddings from an external source (e.g., OpenAI, Ollama)
+    let texts = ["First document", "Second document"]
+    let externalEmbeddings: [[Float]] = [...] // Must match the config.dimension
+    
+    let documentIds = try await vectorDB.addDocumentsWithEmbeddings(
+        texts: texts,
+        embeddings: externalEmbeddings,
+        ids: nil // Optional array of UUIDs
+    )
+    
+    // Add a single document with external embedding
+    let singleDocId = try await vectorDB.addDocumentWithEmbedding(
+        text: "Single document",
+        embedding: externalEmbeddings[0],
+        id: UUID() // Optional, will be generated if not provided
+    )
+    ```
+
 4.  **Search Documents**
 
     ```swift
@@ -266,6 +287,19 @@ VecturaMLXKit harnesses Apple's MLX framework for accelerated processing, delive
         print("Similarity Score: \(result.score)")
         print("Created At: \(result.createdAt)")
     }
+    ```
+
+    **Search with External Embeddings:**
+    
+    ```swift
+    // Pre-computed query embedding from external provider
+    let externalQueryEmbedding: [Float] = [...] // Must match config.dimension
+    
+    let results = try await vectorDB.searchWithExternalEmbedding(
+        queryEmbedding: externalQueryEmbedding,
+        numResults: 5,  // Optional
+        threshold: 0.8  // Optional
+    )
     ```
 
 5.  **Document Management**
@@ -290,6 +324,187 @@ VecturaMLXKit harnesses Apple's MLX framework for accelerated processing, delive
     ```swift
     try await vectorDB.reset()
     ```
+
+### Using External Embedding Providers
+
+VecturaKit supports using embeddings from external providers like OpenAI and Ollama while still benefiting from its storage, retrieval, and hybrid search capabilities.
+
+#### Integration with OpenAI Embeddings
+
+```swift
+import Foundation
+import VecturaKit
+
+// A simple OpenAI embedding client
+class OpenAIEmbeddings {
+    private let apiKey: String
+    private let model: String
+    private let dimension: Int
+    
+    init(apiKey: String, model: String = "text-embedding-3-small", dimension: Int = 1536) {
+        self.apiKey = apiKey
+        self.model = model
+        self.dimension = dimension
+    }
+    
+    func embed(text: String) async throws -> [Float] {
+        let url = URL(string: "https://api.openai.com/v1/embeddings")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "model": model,
+            "input": text
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        
+        let (data, _) = try await URLSession.shared.data(for: request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        
+        guard let data = json?["data"] as? [[String: Any]],
+              let embedding = data.first?["embedding"] as? [Double] else {
+            throw NSError(domain: "OpenAIEmbedding", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to parse OpenAI response"])
+        }
+        
+        return embedding.map { Float($0) }
+    }
+    
+    func embedBatch(texts: [String]) async throws -> [[Float]] {
+        return try await withThrowingTaskGroup(of: [Float].self) { group in
+            for text in texts {
+                group.addTask { try await self.embed(text: text) }
+            }
+            
+            var results: [[Float]] = []
+            for try await embedding in group {
+                results.append(embedding)
+            }
+            return results
+        }
+    }
+}
+
+// Usage with VecturaKit
+func exampleWithOpenAI() async throws {
+    // Setup OpenAI client
+    let openAI = OpenAIEmbeddings(apiKey: "your-api-key")
+    
+    // Setup VecturaKit with matching dimension (1536 for OpenAI text-embedding-3-small)
+    let config = VecturaConfig(name: "openai-vectura", dimension: 1536)
+    let vectorDB = try await VecturaKit(config: config)
+    
+    // Add documents using OpenAI embeddings
+    let texts = ["First document about AI", "Second document about databases"]
+    let embeddings = try await openAI.embedBatch(texts: texts)
+    
+    let docIds = try await vectorDB.addDocumentsWithEmbeddings(
+        texts: texts,
+        embeddings: embeddings
+    )
+    
+    // Search using OpenAI embedding
+    let queryText = "Tell me about artificial intelligence"
+    let queryEmbedding = try await openAI.embed(text: queryText)
+    
+    let results = try await vectorDB.searchWithExternalEmbedding(
+        queryText: queryText,
+        queryEmbedding: queryEmbedding,
+        numResults: 5
+    )
+    
+    for result in results {
+        print("Document: \(result.text)")
+        print("Score: \(result.score)")
+    }
+}
+```
+
+#### Integration with Ollama Embeddings
+
+```swift
+import Foundation
+import VecturaMLXKit
+
+class OllamaEmbeddings {
+    private let baseURL: URL
+    private let model: String
+    private let dimension: Int
+    
+    init(baseURL: URL = URL(string: "http://localhost:11434")!, 
+         model: String = "nomic-embed-text", 
+         dimension: Int = 768) {
+        self.baseURL = baseURL
+        self.model = model
+        self.dimension = dimension
+    }
+    
+    func embed(text: String) async throws -> [Float] {
+        let url = baseURL.appendingPathComponent("api/embeddings")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "model": model,
+            "prompt": text
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        
+        let (data, _) = try await URLSession.shared.data(for: request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        
+        guard let embedding = json?["embedding"] as? [Double] else {
+            throw NSError(domain: "OllamaEmbedding", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to parse Ollama response"])
+        }
+        
+        return embedding.map { Float($0) }
+    }
+    
+    func embedBatch(texts: [String]) async throws -> [[Float]] {
+        var results: [[Float]] = []
+        for text in texts {
+            let embedding = try await embed(text: text)
+            results.append(embedding)
+        }
+        return results
+    }
+}
+
+// Usage with VecturaMLXKit
+func exampleWithOllama() async throws {
+    // Setup Ollama client
+    let ollama = OllamaEmbeddings()
+    
+    // Setup VecturaMLXKit with matching dimension (768 for nomic-embed-text)
+    let config = VecturaConfig(name: "ollama-vectura", dimension: 768)
+    let vectorDB = try await VecturaMLXKit(config: config)
+    
+    // Add documents using Ollama embeddings
+    let texts = ["First document about AI", "Second document about databases"]
+    let embeddings = try await ollama.embedBatch(texts: texts)
+    
+    let docIds = try await vectorDB.addDocumentsWithEmbeddings(
+        texts: texts,
+        embeddings: embeddings
+    )
+    
+    // Search using Ollama embedding
+    let queryText = "Tell me about artificial intelligence"
+    let queryEmbedding = try await ollama.embed(text: queryText)
+    
+    let results = try await vectorDB.searchWithExternalEmbedding(
+        queryEmbedding: queryEmbedding,
+        numResults: 5
+    )
+    
+    for result in results {
+        print("Document: \(result.text)")
+        print("Score: \(result.score)")
+    }
+}
+```
 
 ## Command Line Interface
 
