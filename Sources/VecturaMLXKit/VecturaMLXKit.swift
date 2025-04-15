@@ -11,11 +11,20 @@ public class VecturaMLXKit {
     private var normalizedEmbeddings: [UUID: [Float]] = [:]
     private let storageDirectory: URL
     
-    public init(config: VecturaConfig, modelConfiguration: ModelConfiguration = .nomic_text_v1_5)
-    async throws
+    // Configuration for memory optimization
+    private let maxBatchSize: Int = 16
+    
+    public init(config: VecturaConfig, 
+                modelConfiguration: ModelConfiguration = .nomic_text_v1_5,
+                maxBatchSize: Int = 16,
+                maxTokenLength: Int = 512) async throws
     {
         self.config = config
-        self.embedder = try await MLXEmbedder(configuration: modelConfiguration)
+        self.embedder = try await MLXEmbedder(
+            configuration: modelConfiguration,
+            maxBatchSize: maxBatchSize,
+            defaultMaxLength: maxTokenLength
+        )
         
         if let customStorageDirectory = config.directoryURL {
             let databaseDirectory = customStorageDirectory.appending(path: config.name)
@@ -45,35 +54,64 @@ public class VecturaMLXKit {
             throw VecturaError.invalidInput("Number of IDs must match number of texts")
         }
         
+        // Pre-create the document IDs
+        let documentIds = ids ?? texts.map { _ in UUID() }
+        
+        // For large batches, process in smaller chunks to reduce memory pressure
+        if texts.count > maxBatchSize {
+            var processedIds: [UUID] = []
+            
+            for i in stride(from: 0, to: texts.count, by: maxBatchSize) {
+                let endIdx = min(i + maxBatchSize, texts.count)
+                let batchTexts = Array(texts[i..<endIdx])
+                let batchIds = Array(documentIds[i..<endIdx])
+                
+                let batchResultIds = try await addDocumentsBatch(texts: batchTexts, ids: batchIds)
+                processedIds.append(contentsOf: batchResultIds)
+                
+                // Allow for temporary data to be cleaned up between batches
+                await Task.yield()
+            }
+            
+            return processedIds
+        } else {
+            return try await addDocumentsBatch(texts: texts, ids: documentIds)
+        }
+    }
+    
+    private func addDocumentsBatch(texts: [String], ids: [UUID]) async throws -> [UUID] {
         let embeddings = await embedder.embed(texts: texts)
-        var documentIds = [UUID]()
         var documentsToSave = [VecturaDocument]()
+        documentsToSave.reserveCapacity(texts.count)
+        
+        // Preallocate the normalized array to avoid repeated allocations
+        let embeddingDimension = embeddings.first?.count ?? config.dimension
+        var normalizedBuffer = [Float](repeating: 0, count: embeddingDimension)
         
         for (index, text) in texts.enumerated() {
-            let docId = ids?[index] ?? UUID()
+            let docId = ids[index]
             let doc = VecturaDocument(id: docId, text: text, embedding: embeddings[index])
             
-            // Normalize embedding for cosine similarity
+            // Normalize embedding for cosine similarity (reusing buffer)
             let norm = l2Norm(doc.embedding)
             var divisor = norm + 1e-9
-            var normalized = [Float](repeating: 0, count: doc.embedding.count)
-            vDSP_vsdiv(doc.embedding, 1, &divisor, &normalized, 1, vDSP_Length(doc.embedding.count))
+            vDSP_vsdiv(doc.embedding, 1, &divisor, &normalizedBuffer, 1, vDSP_Length(doc.embedding.count))
             
-            normalizedEmbeddings[doc.id] = normalized
+            // Create a copy of the normalized buffer for storage
+            normalizedEmbeddings[doc.id] = Array(normalizedBuffer)
             documents[doc.id] = doc
-            documentIds.append(docId)
             documentsToSave.append(doc)
         }
         
+        // Perform file operations in parallel with a reasonable chunk size
         try await withThrowingTaskGroup(of: Void.self) { group in
             let directory = self.storageDirectory
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
             
             for doc in documentsToSave {
                 group.addTask {
                     let documentURL = directory.appendingPathComponent("\(doc.id).json")
-                    let encoder = JSONEncoder()
-                    encoder.outputFormatting = .prettyPrinted
-                    
                     let data = try encoder.encode(doc)
                     try data.write(to: documentURL)
                 }
@@ -82,7 +120,7 @@ public class VecturaMLXKit {
             try await group.waitForAll()
         }
         
-        return documentIds
+        return ids
     }
     
     public func search(query: String, numResults: Int? = nil, threshold: Float? = nil) async throws
@@ -94,19 +132,26 @@ public class VecturaMLXKit {
         
         let queryEmbedding = try await embedder.embed(text: query)
         
+        // Reuse buffer for normalized query
         let norm = l2Norm(queryEmbedding)
         var divisorQuery = norm + 1e-9
         var normalizedQuery = [Float](repeating: 0, count: queryEmbedding.count)
         vDSP_vsdiv(
             queryEmbedding, 1, &divisorQuery, &normalizedQuery, 1, vDSP_Length(queryEmbedding.count))
         
+        // Optimize for large document collections
         var results: [VecturaSearchResult] = []
+        results.reserveCapacity(min(documents.count, numResults ?? config.searchOptions.defaultNumResults))
         
+        let minThreshold = threshold ?? config.searchOptions.minThreshold ?? 0
+        
+        // Use Accelerate framework for batch processing if appropriate
+        // For now, process each document individually but with optimizations
         for doc in documents.values {
             guard let normDoc = normalizedEmbeddings[doc.id] else { continue }
             let similarity = dotProduct(normalizedQuery, normDoc)
             
-            if let minT = threshold ?? config.searchOptions.minThreshold, similarity < minT {
+            if similarity < minThreshold {
                 continue
             }
             
@@ -123,7 +168,7 @@ public class VecturaMLXKit {
         results.sort { $0.score > $1.score }
         
         let limit = numResults ?? config.searchOptions.defaultNumResults
-        return Array(results.prefix(limit))
+        return results.count <= limit ? results : Array(results.prefix(limit))
     }
     
     public func deleteDocuments(ids: [UUID]) async throws {
@@ -161,17 +206,26 @@ public class VecturaMLXKit {
         let decoder = JSONDecoder()
         var loadErrors: [String] = []
         
+        // Pre-allocate the normalized buffer
+        var normalizedBuffer: [Float]? = nil
+        
         for fileURL in fileURLs where fileURL.pathExtension == "json" {
             do {
                 let data = try Data(contentsOf: fileURL)
                 let doc = try decoder.decode(VecturaDocument.self, from: data)
                 
-                // Rebuild normalized embeddings
+                // Initialize buffer lazily with the correct size
+                if normalizedBuffer == nil || normalizedBuffer!.count != doc.embedding.count {
+                    normalizedBuffer = [Float](repeating: 0, count: doc.embedding.count)
+                }
+                
+                // Rebuild normalized embeddings using the pre-allocated buffer
                 let norm = l2Norm(doc.embedding)
                 var divisor = norm + 1e-9
-                var normalized = [Float](repeating: 0, count: doc.embedding.count)
-                vDSP_vsdiv(doc.embedding, 1, &divisor, &normalized, 1, vDSP_Length(doc.embedding.count))
-                normalizedEmbeddings[doc.id] = normalized
+                vDSP_vsdiv(doc.embedding, 1, &divisor, &normalizedBuffer!, 1, vDSP_Length(doc.embedding.count))
+                
+                // Store a copy of the normalized embedding
+                normalizedEmbeddings[doc.id] = Array(normalizedBuffer!)
                 documents[doc.id] = doc
             } catch {
                 loadErrors.append(

@@ -11,6 +11,7 @@ VecturaKit is a Swift-based vector database designed for on-device applications,
 -   **Configurable Search:** Customizes search behavior with adjustable thresholds, result limits, and hybrid search weights.
 -   **Custom Storage Location:** Specifies a custom directory for database storage.
 -   **MLX Support:** Employs Apple's MLX framework for accelerated embedding generation and search operations (`VecturaMLXKit`).
+-   **Memory Optimized:** Implements batch processing and efficient memory management to reduce memory consumption.
 -   **CLI Tool:** Includes a command-line interface (CLI) for database management, testing, and debugging for both `VecturaKit` and `VecturaMLXKit`.
 -   **External Embedding Support:** Accepts pre-computed embeddings from external sources, allowing for flexibility in embedding generation.
 
@@ -226,7 +227,17 @@ VecturaMLXKit harnesses Apple's MLX framework for accelerated processing, delive
       name: "my-mlx-vector-db",
       dimension: 768 //  nomic_text_v1_5 model outputs 768-dimensional embeddings
     )
+    
+    // Basic initialization
     let vectorDB = try await VecturaMLXKit(config: config, modelConfiguration: .nomic_text_v1_5)
+    
+    // Memory-optimized initialization with custom parameters
+    let VectorDB = try await VecturaMLXKit(
+        config: config, 
+        modelConfiguration: .nomic_text_v1_5,
+        maxBatchSize: 8,         // Process documents in smaller batches to reduce memory usage
+        maxTokenLength: 256      // Limit token length to avoid large tensor allocations
+    )
     ```
 
 3.  **Add Documents**
@@ -338,23 +349,45 @@ Common options:
 
 ```bash
 # Add documents
-vectura-mlx add "First document" "Second document" "Third document" --db-name "my-mlx-vector-db"
+vectura-mlx add "First document" "Second document" "Third document" \
+  --db-name "my-mlx-vector-db" \
+  --batch-size 8 \
+  --max-token-length 256
 
 # Search documents
-vectura-mlx search "search query" --db-name "my-mlx-vector-db"  --threshold 0.7 --num-results 5
+vectura-mlx search "search query" \
+  --db-name "my-mlx-vector-db" \
+  --threshold 0.7 \
+  --num-results 5 \
+  --batch-size 8 \
+  --max-token-length 256
 
 # Update document
-vectura-mlx update <document-uuid> "Updated text content" --db-name "my-mlx-vector-db"
+vectura-mlx update <document-uuid> "Updated text content" \
+  --db-name "my-mlx-vector-db" \
+  --batch-size 8 \
+  --max-token-length 256
 
 # Delete documents
-vectura-mlx delete <document-uuid-1> <document-uuid-2> --db-name "my-mlx-vector-db"
+vectura-mlx delete <document-uuid-1> <document-uuid-2> \
+  --db-name "my-mlx-vector-db" \
+  --batch-size 8 \
+  --max-token-length 256
 
 # Reset database
 vectura-mlx reset --db-name "my-mlx-vector-db"
 
 # Run demo with sample data
-vectura-mlx mock  --db-name "my-mlx-vector-db"
+vectura-mlx mock \
+  --db-name "my-mlx-vector-db" \
+  --batch-size 8 \
+  --max-token-length 256
 ```
+
+MLX-specific options:
+
+-   `--batch-size, -b`: Maximum batch size for processing (default: 16)
+-   `--max-token-length, -t`: Maximum token length for documents (default: 512)
 
 ## License
 

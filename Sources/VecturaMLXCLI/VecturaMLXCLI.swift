@@ -27,7 +27,10 @@ struct VecturaMLXCLI: AsyncParsableCommand {
     )
     
     static func setupDB(
-        dbName: String, modelConfiguration: MLXEmbedders.ModelConfiguration = .nomic_text_v1_5
+        dbName: String, 
+        modelConfiguration: MLXEmbedders.ModelConfiguration = .nomic_text_v1_5,
+        maxBatchSize: Int = 16,
+        maxTokenLength: Int = 512
     )
     async throws
     -> VecturaMLXKit
@@ -36,7 +39,12 @@ struct VecturaMLXCLI: AsyncParsableCommand {
             name: dbName,
             dimension: 768  // nomic_text_v1_5 model outputs 768-dimensional embeddings
         )
-        return try await VecturaMLXKit(config: config, modelConfiguration: modelConfiguration)
+        return try await VecturaMLXKit(
+            config: config, 
+            modelConfiguration: modelConfiguration,
+            maxBatchSize: maxBatchSize,
+            maxTokenLength: maxTokenLength
+        )
     }
 }
 
@@ -50,11 +58,21 @@ extension VecturaMLXCLI {
         @Option(name: [.long, .customShort("d")], help: "Database name")
         var dbName: String = "vectura-mlx-cli-db"
         
+        @Option(name: [.long, .customShort("b")], help: "Maximum batch size for processing")
+        var batchSize: Int = 16
+        
+        @Option(name: [.long, .customShort("t")], help: "Maximum token length for documents")
+        var maxTokenLength: Int = 512
+        
         mutating func run() async throws {
             print("Starting mock command...")
             
             print("Setting up database...")
-            let db = try await VecturaMLXCLI.setupDB(dbName: dbName)
+            let db = try await VecturaMLXCLI.setupDB(
+                dbName: dbName, 
+                maxBatchSize: batchSize, 
+                maxTokenLength: maxTokenLength
+            )
             print("Database setup complete")
             
             // First, reset the database
@@ -120,11 +138,21 @@ extension VecturaMLXCLI {
         @Option(name: [.long, .customShort("d")], help: "Database name")
         var dbName: String = "vectura-mlx-cli-db"
         
+        @Option(name: [.long, .customShort("b")], help: "Maximum batch size for processing")
+        var batchSize: Int = 16
+        
+        @Option(name: [.long, .customShort("t")], help: "Maximum token length for documents")
+        var maxTokenLength: Int = 512
+        
         @Argument(help: "Text content to add")
         var text: [String]
         
         mutating func run() async throws {
-            let db = try await VecturaMLXCLI.setupDB(dbName: dbName)
+            let db = try await VecturaMLXCLI.setupDB(
+                dbName: dbName, 
+                maxBatchSize: batchSize, 
+                maxTokenLength: maxTokenLength
+            )
             let ids = try await db.addDocuments(texts: text)
             print("Added \(ids.count) documents:")
             for (id, text) in zip(ids, text) {
@@ -149,6 +177,12 @@ extension VecturaMLXCLI {
         @Option(name: [.long, .customShort("n")], help: "Number of results to return")
         var numResults: Int?
         
+        @Option(name: [.long, .customShort("b")], help: "Maximum batch size for processing")
+        var batchSize: Int = 16
+        
+        @Option(name: [.long, .customShort("m")], help: "Maximum token length for documents")
+        var maxTokenLength: Int = 512
+        
         @Argument(help: "Search query")
         var query: String
         
@@ -158,7 +192,11 @@ extension VecturaMLXCLI {
                 throw ExitCode.failure
             }
             
-            let db = try await VecturaMLXCLI.setupDB(dbName: dbName)
+            let db = try await VecturaMLXCLI.setupDB(
+                dbName: dbName, 
+                maxBatchSize: batchSize, 
+                maxTokenLength: maxTokenLength
+            )
             let results = try await db.search(
                 query: query,
                 numResults: numResults,
@@ -184,6 +222,12 @@ extension VecturaMLXCLI {
         @Option(name: [.long, .customShort("d")], help: "Database name")
         var dbName: String = "vectura-mlx-cli-db"
         
+        @Option(name: [.long, .customShort("b")], help: "Maximum batch size for processing")
+        var batchSize: Int = 16
+        
+        @Option(name: [.long, .customShort("t")], help: "Maximum token length for documents")
+        var maxTokenLength: Int = 512
+        
         @Argument(help: "Document ID to update")
         var id: DocumentID
         
@@ -191,7 +235,11 @@ extension VecturaMLXCLI {
         var newText: String
         
         mutating func run() async throws {
-            let db = try await VecturaMLXCLI.setupDB(dbName: dbName)
+            let db = try await VecturaMLXCLI.setupDB(
+                dbName: dbName, 
+                maxBatchSize: batchSize, 
+                maxTokenLength: maxTokenLength
+            )
             try await db.updateDocument(id: id.uuid, newText: newText)
             print("Updated document \(id.uuid) with new text: \(newText)")
         }
@@ -205,11 +253,21 @@ extension VecturaMLXCLI {
         @Option(name: [.long, .customShort("d")], help: "Database name")
         var dbName: String = "vectura-mlx-cli-db"
         
+        @Option(name: [.long, .customShort("b")], help: "Maximum batch size for processing")
+        var batchSize: Int = 16
+        
+        @Option(name: [.long, .customShort("t")], help: "Maximum token length for documents")
+        var maxTokenLength: Int = 512
+        
         @Argument(help: "Document IDs to delete")
         var ids: [DocumentID]
         
         mutating func run() async throws {
-            let db = try await VecturaMLXCLI.setupDB(dbName: dbName)
+            let db = try await VecturaMLXCLI.setupDB(
+                dbName: dbName, 
+                maxBatchSize: batchSize, 
+                maxTokenLength: maxTokenLength
+            )
             try await db.deleteDocuments(ids: ids.map(\.uuid))
             print("Deleted \(ids.count) documents")
         }
