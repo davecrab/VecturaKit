@@ -412,6 +412,86 @@ public class VecturaKit: VecturaProtocol {
             query: query, numResults: numResults, threshold: threshold, model: .id(modelId))
     }
 
+    /// Searches for documents using a pre-computed embedding from an external source.
+    ///
+    /// - Parameters:
+    ///   - queryText: The original text query (used for hybrid search combining vector and BM25)
+    ///   - queryEmbedding: The pre-computed embedding for the query text
+    ///   - numResults: Optional limit on the number of results to return
+    ///   - threshold: Optional minimum similarity threshold
+    /// - Returns: An array of search results
+    public func searchWithExternalEmbedding(
+        queryText: String,
+        queryEmbedding: [Float],
+        numResults: Int? = nil,
+        threshold: Float? = nil
+    ) async throws -> [VecturaSearchResult] {
+        if queryEmbedding.count != config.dimension {
+            throw VecturaError.dimensionMismatch(
+                expected: config.dimension,
+                got: queryEmbedding.count
+            )
+        }
+        
+        // Get vector similarity results without re-computing the embedding
+        let vectorResults = try await search(
+            query: queryEmbedding,
+            numResults: nil,
+            threshold: nil
+        )
+        
+        // Initialize BM25 index if needed
+        if bm25Index == nil {
+            let docs = documents.values.map { $0 }
+            bm25Index = BM25Index(
+                documents: docs,
+                k1: config.searchOptions.k1,
+                b: config.searchOptions.b
+            )
+        }
+        
+        let bm25Results = bm25Index?.search(
+            query: queryText,
+            topK: documents.count
+        ) ?? []
+        
+        // Create a map of document IDs to their BM25 scores
+        let bm25Scores = Dictionary(
+            bm25Results.map { ($0.document.id, $0.score) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        
+        // Combine scores using hybrid scoring
+        var hybridResults = vectorResults.map { result in
+            let bm25Score = bm25Scores[result.id] ?? 0
+            let hybridScore = VecturaDocument(
+                id: result.id,
+                text: result.text,
+                embedding: []
+            ).hybridScore(
+                vectorScore: result.score,
+                bm25Score: bm25Score,
+                weight: config.searchOptions.hybridWeight
+            )
+            
+            return VecturaSearchResult(
+                id: result.id,
+                text: result.text,
+                score: hybridScore,
+                createdAt: result.createdAt
+            )
+        }
+        
+        hybridResults.sort { $0.score > $1.score }
+        
+        if let threshold = threshold ?? config.searchOptions.minThreshold {
+            hybridResults = hybridResults.filter { $0.score >= threshold }
+        }
+        
+        let limit = numResults ?? config.searchOptions.defaultNumResults
+        return Array(hybridResults.prefix(limit))
+    }
+
     public func reset() async throws {
         documents.removeAll()
         normalizedEmbeddings.removeAll()

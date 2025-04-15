@@ -54,57 +54,27 @@ public class MLXEmbedder: @unchecked Sendable {
         acc = max(acc, elem.count)
       }
       maxLength = min(maxLength, self.defaultMaxLength)
-
-      // Create a strong reference collection to keep all MLXArrays alive during processing
-      var arrayKeepAlive: [Any] = []
       
-      // Process inputs in smaller groups if needed
-      var paddedInputs: [MLXArray] = []
-      paddedInputs.reserveCapacity(inputs.count)
+      // Pad and stack in one operation
+      let padded = stacked(
+        inputs.map { elem in
+          MLXArray(
+            elem + Array(
+              repeating: tokenizer.eosTokenId ?? 0,
+              count: maxLength - elem.count))
+        })
       
-      for elem in inputs {
-        // More efficient array allocation - pre-allocate once
-        var paddedElements = elem
-        let paddingCount = maxLength - elem.count
-        
-        if paddingCount > 0 {
-          paddedElements.reserveCapacity(maxLength)
-          paddedElements.append(contentsOf: Array(
-            repeating: tokenizer.eosTokenId ?? 0,
-            count: paddingCount))
-        }
-        
-        let mlxArray = MLXArray(paddedElements)
-        paddedInputs.append(mlxArray)
-        arrayKeepAlive.append(mlxArray) // Keep a strong reference
-      }
-      
-      // Stack arrays into a single batch
-      let padded = stacked(paddedInputs)
-      arrayKeepAlive.append(padded) // Keep a strong reference
-      
-      // Keep mask and tokenTypes objects alive too
       let mask = (padded .!= tokenizer.eosTokenId ?? 0)
-      arrayKeepAlive.append(mask)
-      
       let tokenTypes = MLXArray.zeros(like: padded)
-      arrayKeepAlive.append(tokenTypes)
 
-      // Run the model - it returns EmbeddingModelOutput, not MLXArray
-      let modelOutput = model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask)
-      arrayKeepAlive.append(modelOutput) // Keep the output strongly referenced too
-      
-      // Apply pooling
-      let result = pooling(modelOutput, normalize: true, applyLayerNorm: true)
-      arrayKeepAlive.append(result) // Keep a strong reference
+      // Use the pooling with eval() 
+      let result = pooling(
+        model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask),
+        normalize: true, applyLayerNorm: true
+      ).eval()
       
       // Convert to Float arrays
-      let floatArrays = result.map { $0.asArray(Float.self) }
-      
-      // Keep references alive until we're done
-      _ = arrayKeepAlive
-      
-      return floatArrays
+      return result.map { $0.asArray(Float.self) }
     }
   }
 
