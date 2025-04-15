@@ -16,6 +16,19 @@ public protocol VecturaProtocol {
         ids: [UUID]?,
         model: VecturaModelSource
     ) async throws -> [UUID]
+    
+    /// Adds multiple documents with pre-computed embeddings to the vector store in batch.
+    ///
+    /// - Parameters:
+    ///   - texts: The text contents of the documents.
+    ///   - embeddings: Pre-computed embeddings for the documents.
+    ///   - ids: Optional unique identifiers for the documents.
+    /// - Returns: The IDs of the added documents.
+    func addDocumentsWithEmbeddings(
+        texts: [String],
+        embeddings: [[Float]],
+        ids: [UUID]?
+    ) async throws -> [UUID]
 
     /// Searches for similar documents using a *pre-computed query embedding*.
     ///
@@ -55,6 +68,26 @@ public extension VecturaProtocol {
             texts: [text],
             ids: id.map { [$0] },
             model: model
+        )
+        return ids[0]
+    }
+    
+    /// Adds a document with a pre-computed embedding to the vector store.
+    ///
+    /// - Parameters:
+    ///   - text: The text content of the document.
+    ///   - embedding: Pre-computed embedding for the document.
+    ///   - id: Optional unique identifier for the document.
+    /// - Returns: The ID of the added document.
+    func addDocumentWithEmbedding(
+        text: String,
+        embedding: [Float],
+        id: UUID? = nil
+    ) async throws -> UUID {
+        let ids = try await addDocumentsWithEmbeddings(
+            texts: [text],
+            embeddings: [embedding],
+            ids: id.map { [$0] }
         )
         return ids[0]
     }

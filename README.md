@@ -12,6 +12,7 @@ VecturaKit is a Swift-based vector database designed for on-device applications,
 -   **Custom Storage Location:** Specifies a custom directory for database storage.
 -   **MLX Support:** Employs Apple's MLX framework for accelerated embedding generation and search operations (`VecturaMLXKit`).
 -   **CLI Tool:** Includes a command-line interface (CLI) for database management, testing, and debugging for both `VecturaKit` and `VecturaMLXKit`.
+-   **External Embedding Support:** Accepts pre-computed embeddings from external sources, allowing for flexibility in embedding generation.
 
 ## Supported Platforms
 
@@ -100,6 +101,42 @@ VecturaKit relies on the following Swift packages:
          model: .id("sentence-transformers/all-MiniLM-L6-v2") // Optional model
     )
     ```
+    
+    **Using External Embeddings:**
+    
+    Add a single document with a pre-computed embedding:
+    
+    ```swift
+    // Pre-computed embedding from an external source (e.g., OpenAI, Cohere, custom model)
+    let externalEmbedding: [Float] = [...] // Must match config.dimension
+    
+    let documentId = try await vectorDB.addDocumentWithEmbedding(
+        text: "Document with external embedding",
+        embedding: externalEmbedding,
+        id: UUID()  // Optional, will be generated if not provided
+    )
+    ```
+    
+    Add multiple documents with pre-computed embeddings:
+    
+    ```swift
+    let texts = [
+        "First document with external embedding",
+        "Second document with external embedding"
+    ]
+    
+    // Pre-computed embeddings from an external source
+    let externalEmbeddings: [[Float]] = [
+        [...], // First embedding, must match config.dimension
+        [...]  // Second embedding, must match config.dimension
+    ]
+    
+    let documentIds = try await vectorDB.addDocumentsWithEmbeddings(
+        texts: texts,
+        embeddings: externalEmbeddings,
+        ids: nil  // Optional array of UUIDs
+    )
+    ```
 
 4.  **Search Documents**
 
@@ -126,6 +163,20 @@ VecturaKit relies on the following Swift packages:
     ```swift
     let results = try await vectorDB.search(
         query: embeddingArray,  // [Float] matching config.dimension
+        numResults: 5,  // Optional
+        threshold: 0.8  // Optional
+    )
+    ```
+    
+    **Search with External Embeddings:**
+    
+    ```swift
+    // Pre-computed query embedding from an external source
+    let externalQueryEmbedding: [Float] = [...] // Must match config.dimension
+    
+    let results = try await vectorDB.searchWithExternalEmbedding(
+        queryText: "search query text", // Original text for hybrid search
+        queryEmbedding: externalQueryEmbedding,
         numResults: 5,  // Optional
         threshold: 0.8  // Optional
     )

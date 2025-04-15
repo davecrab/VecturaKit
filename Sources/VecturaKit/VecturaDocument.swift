@@ -25,6 +25,20 @@ public struct VecturaDocument: Identifiable, Codable, Sendable {
         self.embedding = embedding
         self.createdAt = Date()
     }
+    
+    /// Calculates a hybrid score combining vector similarity and BM25 rankings.
+    /// - Parameters:
+    ///   - vectorScore: The vector similarity score (0.0 to 1.0).
+    ///   - bm25Score: The BM25 score from text-based search.
+    ///   - weight: The weight to apply to the vector score (0.0 to 1.0).
+    /// - Returns: A combined hybrid score.
+    public func hybridScore(vectorScore: Float, bm25Score: Float, weight: Float) -> Float {
+        // Normalize BM25 score to 0-1 range
+        let normalizedBM25 = bm25Score / max(bm25Score, 1.0)
+        
+        // Combine with weighted average
+        return weight * vectorScore + (1.0 - weight) * normalizedBM25
+    }
 
     // MARK: - Codable
     enum CodingKeys: String, CodingKey {

@@ -158,6 +158,86 @@ public class VecturaKit: VecturaProtocol {
         return documentIds
     }
 
+    /// Adds multiple documents with pre-computed embeddings to the vector store in batch.
+    ///
+    /// - Parameters:
+    ///   - texts: The text contents of the documents.
+    ///   - embeddings: Pre-computed embeddings for the documents.
+    ///   - ids: Optional unique identifiers for the documents.
+    /// - Returns: The IDs of the added documents.
+    public func addDocumentsWithEmbeddings(
+        texts: [String],
+        embeddings: [[Float]],
+        ids: [UUID]? = nil
+    ) async throws -> [UUID] {
+        if let ids = ids, ids.count != texts.count {
+            throw VecturaError.invalidInput("Number of IDs must match number of texts")
+        }
+        
+        if texts.count != embeddings.count {
+            throw VecturaError.invalidInput("Number of texts must match number of embeddings")
+        }
+        
+        for embedding in embeddings {
+            if embedding.count != config.dimension {
+                throw VecturaError.dimensionMismatch(
+                    expected: config.dimension,
+                    got: embedding.count
+                )
+            }
+        }
+        
+        var documentIds = [UUID]()
+        var documentsToSave = [VecturaDocument]()
+
+        for i in 0..<texts.count {
+            let docId = ids?[i] ?? UUID()
+            let doc = VecturaDocument(
+                id: docId,
+                text: texts[i],
+                embedding: embeddings[i]
+            )
+            documentsToSave.append(doc)
+            documentIds.append(docId)
+        }
+
+        for doc in documentsToSave {
+            let norm = l2Norm(doc.embedding)
+            var divisor = norm + 1e-9
+            var normalized = [Float](repeating: 0, count: doc.embedding.count)
+            vDSP_vsdiv(doc.embedding, 1, &divisor, &normalized, 1, vDSP_Length(doc.embedding.count))
+            normalizedEmbeddings[doc.id] = normalized
+            documents[doc.id] = doc
+        }
+
+        let allDocs = Array(documents.values)
+
+        bm25Index = BM25Index(
+            documents: allDocs,
+            k1: config.searchOptions.k1,
+            b: config.searchOptions.b
+        )
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            let directory = self.storageDirectory
+
+            for doc in documentsToSave {
+                group.addTask {
+                    let documentURL = directory.appendingPathComponent("\(doc.id).json")
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = .prettyPrinted
+
+                    let data = try encoder.encode(doc)
+                    try data.write(to: documentURL)
+                }
+            }
+
+            try await group.waitForAll()
+        }
+
+        return documentIds
+    }
+
     public func search(
         query queryEmbedding: [Float],
         numResults: Int? = nil,
