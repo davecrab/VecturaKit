@@ -32,9 +32,9 @@ public struct VecturaDocument: Identifiable, Codable, Sendable {
     ///   - bm25Score: The BM25 score from text-based search.
     ///   - weight: The weight to apply to the vector score (0.0 to 1.0).
     /// - Returns: A combined hybrid score.
-    public func hybridScore(vectorScore: Float, bm25Score: Float, weight: Float) -> Float {
-        // Normalize BM25 score to 0-1 range
-        let normalizedBM25 = bm25Score / max(bm25Score, 1.0)
+    public func hybridScore(vectorScore: Float, bm25Score: Float, weight: Float = 0.5) -> Float {
+        // Normalize BM25 score to 0-1 range, clamping to ensure it's within bounds
+        let normalizedBM25 = min(max(bm25Score / 10.0, 0), 1)
         
         // Combine with weighted average
         return weight * vectorScore + (1.0 - weight) * normalizedBM25

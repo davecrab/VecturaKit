@@ -108,17 +108,3 @@ public struct BM25Index {
                 .count)
     }
 }
-
-extension VecturaDocument {
-    /// Calculates a hybrid search score combining vector similarity and BM25
-    ///
-    /// - Parameters:
-    ///   - vectorScore: The vector similarity score
-    ///   - bm25Score: The BM25 score
-    ///   - weight: Weight for vector score (0.0-1.0), BM25 weight will be (1-weight)
-    /// - Returns: Combined score
-    public func hybridScore(vectorScore: Float, bm25Score: Float, weight: Float = 0.5) -> Float {
-        let normalizedBM25 = min(max(bm25Score / 10.0, 0), 1)
-        return weight * vectorScore + (1 - weight) * normalizedBM25
-    }
-}
