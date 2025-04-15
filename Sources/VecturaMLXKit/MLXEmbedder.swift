@@ -63,6 +63,10 @@ public class MLXEmbedder: @unchecked Sendable {
       // - Generate embeddings for each chunk and average/combine them
       maxLength = min(maxLength, self.defaultMaxLength)
 
+      // Create a strong reference to store all MLXArrays to ensure they stay in memory 
+      // during the entire operation
+      var strongReferences = [MLXArray]()
+      
       // Process inputs in smaller groups if needed
       var paddedInputs: [MLXArray] = []
       paddedInputs.reserveCapacity(inputs.count)
@@ -79,24 +83,37 @@ public class MLXEmbedder: @unchecked Sendable {
             count: paddingCount))
         }
         
-        paddedInputs.append(MLXArray(paddedElements))
+        let mlxArray = MLXArray(paddedElements)
+        paddedInputs.append(mlxArray)
+        strongReferences.append(mlxArray) // Keep a strong reference
       }
       
+      // Stack arrays into a single batch
       let padded = stacked(paddedInputs)
+      strongReferences.append(padded) // Keep a strong reference to padded
       
-      // Release individual MLXArrays as they're no longer needed
-      paddedInputs = []
-
+      // Keep mask and tokenTypes in strong references too
       let mask = (padded .!= tokenizer.eosTokenId ?? 0)
-      let tokenTypes = MLXArray.zeros(like: padded)
-
-      let result = pooling(
-        model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask),
-        normalize: true, applyLayerNorm: true
-      )
+      strongReferences.append(mask)
       
-      // Directly return array conversion to avoid keeping extra MLXArrays in memory
-      return result.map { $0.asArray(Float.self) }
+      let tokenTypes = MLXArray.zeros(like: padded)
+      strongReferences.append(tokenTypes)
+
+      // Run the model with attention mask
+      let embeddings = model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask)
+      strongReferences.append(embeddings) // Keep a strong reference
+      
+      // Apply pooling
+      let result = pooling(embeddings, normalize: true, applyLayerNorm: true)
+      strongReferences.append(result) // Keep a strong reference
+      
+      // Process results
+      let floatArrays = result.map { $0.asArray(Float.self) }
+      
+      // Keep references alive until we're done
+      _ = strongReferences
+      
+      return floatArrays
     }
   }
 
