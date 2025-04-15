@@ -492,6 +492,30 @@ public class VecturaKit: VecturaProtocol {
         return Array(hybridResults.prefix(limit))
     }
 
+    /// Returns the number of documents in the vector database.
+    /// - Returns: The count of documents currently stored in the database.
+    public func documentCount() -> Int {
+        return documents.count
+    }
+    
+    /// Checks if a document with the specified ID exists in the database.
+    /// - Parameter id: The UUID of the document to check
+    /// - Returns: `true` if the document exists, `false` otherwise
+    public func documentExists(id: UUID) -> Bool {
+        return documents[id] != nil
+    }
+    
+    /// Checks if documents with the specified IDs exist in the database.
+    /// - Parameter ids: An array of UUIDs to check
+    /// - Returns: A dictionary mapping each UUID to a boolean indicating whether it exists
+    public func documentsExist(ids: [UUID]) -> [UUID: Bool] {
+        var results: [UUID: Bool] = [:]
+        for id in ids {
+            results[id] = documents[id] != nil
+        }
+        return results
+    }
+
     public func reset() async throws {
         documents.removeAll()
         normalizedEmbeddings.removeAll()

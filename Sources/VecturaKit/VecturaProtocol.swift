@@ -2,6 +2,20 @@ import Foundation
 
 /// A protocol defining the requirements for a vector database instance.
 public protocol VecturaProtocol {
+    
+    /// Returns the number of documents in the vector database.
+    /// - Returns: The count of documents currently stored in the database.
+    func documentCount() -> Int
+    
+    /// Checks if a document with the specified ID exists in the database.
+    /// - Parameter id: The UUID of the document to check
+    /// - Returns: `true` if the document exists, `false` otherwise
+    func documentExists(id: UUID) -> Bool
+    
+    /// Checks if documents with the specified IDs exist in the database.
+    /// - Parameter ids: An array of UUIDs to check
+    /// - Returns: A dictionary mapping each UUID to a boolean indicating whether it exists
+    func documentsExist(ids: [UUID]) -> [UUID: Bool]
 
     /// Adds multiple documents to the vector store in batch.
     ///

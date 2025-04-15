@@ -206,6 +206,29 @@ VecturaKit relies on the following Swift packages:
     ```swift
     try await vectorDB.reset()
     ```
+    
+    Get document count:
+    
+    ```swift
+    let count = vectorDB.documentCount()
+    print("The database contains \(count) documents")
+    ```
+    
+    Check if document exists:
+    
+    ```swift
+    // Check if a single document exists
+    let exists = vectorDB.documentExists(id: documentId)
+    if exists {
+        print("Document exists")
+    }
+    
+    // Check if multiple documents exist
+    let existenceMap = vectorDB.documentsExist(ids: [id1, id2, id3])
+    for (id, exists) in existenceMap {
+        print("Document \(id): \(exists ? "exists" : "does not exist")")
+    }
+    ```
 
 ### VecturaMLXKit (MLX Version)
 
