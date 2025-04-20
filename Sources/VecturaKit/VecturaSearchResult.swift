@@ -14,6 +14,9 @@ public struct VecturaSearchResult: Identifiable, Sendable {
     
     /// The timestamp when the document was created.
     public let createdAt: Date
+
+    /// Optional metadata dictionary for the matching document.
+    public let metadata: [String: String]?
     
     /// Creates a new search result with the given properties.
     ///
@@ -22,10 +25,12 @@ public struct VecturaSearchResult: Identifiable, Sendable {
     ///   - text: The text content of the matching document.
     ///   - score: The similarity score between the query and the document.
     ///   - createdAt: The timestamp when the document was created.
-    public init(id: UUID, text: String, score: Float, createdAt: Date) {
+    ///   - metadata: Optional metadata dictionary.
+    public init(id: UUID, text: String, score: Float, createdAt: Date, metadata: [String: String]? = nil) {
         self.id = id
         self.text = text
         self.score = score
         self.createdAt = createdAt
+        self.metadata = metadata
     }
 }

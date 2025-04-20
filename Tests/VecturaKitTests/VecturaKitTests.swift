@@ -221,4 +221,62 @@ final class VecturaKitTests: XCTestCase {
         let documentPath = customDirectoryURL.appending(path: "test/\(id).json").path(percentEncoded: false)
         XCTAssertTrue(FileManager.default.fileExists(atPath: documentPath), "Custom storage directory inserted document doesn't exist at \(documentPath)")
     }
+    
+    func testAddDocumentWithMetadataAndSearchByMetadata() async throws {
+        let text = "Metadata test document"
+        let meta: [String: String] = ["foo": "bar", "baz": "qux"]
+        let id = try await vectura.addDocument(text: text, metadata: meta)
+        // Search by text, check metadata
+        let results = try await vectura.search(query: "Metadata test document")
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].metadata?["foo"], "bar")
+        // Search by metadata filter
+        let metaResults = try await vectura.search(query: "Metadata test document", filter: ["foo": "bar"])
+        XCTAssertEqual(metaResults.count, 1)
+        let noResults = try await vectura.search(query: "Metadata test document", filter: ["foo": "notfound"])
+        XCTAssertEqual(noResults.count, 0)
+    }
+
+    func testDeleteDocumentsByMetadata() async throws {
+        let id1 = try await vectura.addDocument(text: "Doc1", metadata: ["group": "A"])
+        let id2 = try await vectura.addDocument(text: "Doc2", metadata: ["group": "B"])
+        let id3 = try await vectura.addDocument(text: "Doc3", metadata: ["group": "A"])
+        // Delete all group A
+        try await vectura.deleteDocuments(filter: ["group": "A"])
+        let results = try await vectura.search(query: "Doc", numResults: 10)
+        let ids = results.map { $0.id }
+        XCTAssertTrue(ids.contains(id2))
+        XCTAssertFalse(ids.contains(id1))
+        XCTAssertFalse(ids.contains(id3))
+    }
+
+    func testIngestFileChunks() async throws {
+        // Find the test file relative to this source file
+        let testFileName = "TestFile.txt"
+        let testFilePath: String
+        if let bundlePath = Bundle(for: type(of: self)).resourcePath {
+            testFilePath = bundlePath + "/" + testFileName
+        } else {
+            // Fallback: try relative to the source file
+            let thisFile = URL(fileURLWithPath: #file)
+            let testDir = thisFile.deletingLastPathComponent()
+            testFilePath = testDir.appendingPathComponent(testFileName).path
+        }
+        let fileURL = URL(fileURLWithPath: testFilePath)
+        let chunkIDs = try await vectura.ingestFileChunks(fileURL: fileURL, chunkSize: 40, overlap: 10)
+        XCTAssertGreaterThan(chunkIDs.count, 1)
+        // All chunks should have metadata with originalFileID and chunkIndex
+        let firstChunk = try await vectura.search(query: "first chunk", filter: ["chunkIndex": "0"])
+        XCTAssertEqual(firstChunk.count, 1)
+        let meta = firstChunk[0].metadata
+        XCTAssertNotNil(meta?["originalFileID"])
+        XCTAssertEqual(meta?["chunkIndex"], "0")
+        XCTAssertEqual(meta?["type"], "fileChunk")
+        XCTAssertNotNil(meta?["text"])
+        // Deletion by fileID
+        let fileID = meta?["originalFileID"]
+        try await vectura.deleteDocuments(filter: ["originalFileID": fileID!])
+        let afterDelete = try await vectura.search(query: "chunk", filter: ["originalFileID": fileID!])
+        XCTAssertEqual(afterDelete.count, 0)
+    }
 }

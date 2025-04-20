@@ -230,6 +230,58 @@ VecturaKit relies on the following Swift packages:
     }
     ```
 
+## New Features in VecturaKit
+
+### Document Metadata Support
+
+- You can now store arbitrary key-value metadata (e.g., `[String: String]`) with each document.
+- Metadata is included in all search results and can be used for filtering and deletion.
+
+#### Adding Documents with Metadata
+
+```swift
+let meta: [String: String] = ["source": "fileA", "type": "note"]
+let docId = try await vectorDB.addDocument(text: "My note", metadata: meta)
+```
+
+#### Metadata-Based Search
+
+```swift
+let results = try await vectorDB.search(query: "note", filter: ["source": "fileA"])
+```
+
+#### Metadata-Based Deletion
+
+```swift
+try await vectorDB.deleteDocuments(filter: ["source": "fileA"])
+```
+
+### Automatic File Chunking and Ingestion
+
+- Ingest any file that can be read as plain text (e.g., .txt, .md, .swift, .py, etc.).
+- The file is split into overlapping chunks, each chunk is stored as a document with metadata including the original file ID, chunk index, and chunk text.
+
+#### Example: Ingesting a File
+
+```swift
+let fileURL = URL(fileURLWithPath: "/path/to/your/file.swift")
+let chunkIDs = try await vectorDB.ingestFileChunks(
+    fileURL: fileURL,
+    chunkSize: 1000,   // Number of characters per chunk
+    overlap: 100       // Overlap between chunks
+)
+```
+
+#### Searching and Deleting by File Chunk Metadata
+
+```swift
+// Search for all chunks from a specific file
+let results = try await vectorDB.search(query: "some code", filter: ["originalFileID": fileID.uuidString])
+
+// Delete all chunks for a file
+try await vectorDB.deleteDocuments(filter: ["originalFileID": fileID.uuidString])
+```
+
 ### VecturaMLXKit (MLX Version)
 
 VecturaMLXKit harnesses Apple's MLX framework for accelerated processing, delivering optimized performance for on-device machine learning tasks.

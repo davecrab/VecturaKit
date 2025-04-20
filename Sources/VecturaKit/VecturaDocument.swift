@@ -14,16 +14,21 @@ public struct VecturaDocument: Identifiable, Codable, Sendable {
     /// The timestamp when the document was created.
     public let createdAt: Date
 
+    /// Optional metadata dictionary for storing arbitrary key-value pairs.
+    public let metadata: [String: String]?
+
     /// Creates a new document with the given properties.
     /// - Parameters:
     ///   - id: The unique identifier for the document. If nil, a new UUID will be generated.
     ///   - text: The text content of the document.
     ///   - embedding: The vector embedding of the document.
-    public init(id: UUID? = nil, text: String, embedding: [Float]) {
+    ///   - metadata: Optional metadata dictionary.
+    public init(id: UUID? = nil, text: String, embedding: [Float], metadata: [String: String]? = nil) {
         self.id = id ?? UUID()
         self.text = text
         self.embedding = embedding
         self.createdAt = Date()
+        self.metadata = metadata
     }
     
     /// Calculates a hybrid score combining vector similarity and BM25 rankings.
@@ -42,6 +47,6 @@ public struct VecturaDocument: Identifiable, Codable, Sendable {
 
     // MARK: - Codable
     enum CodingKeys: String, CodingKey {
-        case id, text, embedding, createdAt
+        case id, text, embedding, createdAt, metadata
     }
 }

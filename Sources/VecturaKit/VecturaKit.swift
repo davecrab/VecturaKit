@@ -71,56 +71,52 @@ public class VecturaKit: VecturaProtocol {
     public func addDocuments(
         texts: [String],
         ids: [UUID]? = nil,
-        model: VecturaModelSource = .default
+        model: VecturaModelSource = .default,
+        metadatas: [[String: String]?]? = nil
     ) async throws -> [UUID] {
         if let ids = ids, ids.count != texts.count {
             throw VecturaError.invalidInput("Number of IDs must match number of texts")
         }
-
+        if let metadatas = metadatas, metadatas.count != texts.count {
+            throw VecturaError.invalidInput("Number of metadatas must match number of texts")
+        }
         if bertModel == nil {
             bertModel = try await Bert.loadModelBundle(from: model)
         }
-
         guard let modelBundle = bertModel else {
             throw VecturaError.invalidInput("Failed to load BERT model: \(model)")
         }
-
         let embeddingsTensor = try modelBundle.batchEncode(texts)
         let shape = embeddingsTensor.shape
-
         if shape.count != 2 {
             throw VecturaError.invalidInput("Expected shape [N, D], got \(shape)")
         }
-
         if shape[1] != config.dimension {
             throw VecturaError.dimensionMismatch(
                 expected: config.dimension,
                 got: shape[1]
             )
         }
-
         let embeddingShapedArray = await embeddingsTensor.cast(to: Float.self).shapedArray(
             of: Float.self)
         let allScalars = embeddingShapedArray.scalars
-
         var documentIds = [UUID]()
         var documentsToSave = [VecturaDocument]()
-
         for i in 0..<texts.count {
             let startIndex = i * config.dimension
             let endIndex = startIndex + config.dimension
             let embeddingRow = Array(allScalars[startIndex..<endIndex])
-
             let docId = ids?[i] ?? UUID()
+            let metadata = metadatas?[i]
             let doc = VecturaDocument(
                 id: docId,
                 text: texts[i],
-                embedding: embeddingRow
+                embedding: embeddingRow,
+                metadata: metadata
             )
             documentsToSave.append(doc)
             documentIds.append(docId)
         }
-
         for doc in documentsToSave {
             let norm = l2Norm(doc.embedding)
             var divisor = norm + 1e-9
@@ -129,32 +125,25 @@ public class VecturaKit: VecturaProtocol {
             normalizedEmbeddings[doc.id] = normalized
             documents[doc.id] = doc
         }
-
         let allDocs = Array(documents.values)
-
         bm25Index = BM25Index(
             documents: allDocs,
             k1: config.searchOptions.k1,
             b: config.searchOptions.b
         )
-
         try await withThrowingTaskGroup(of: Void.self) { group in
             let directory = self.storageDirectory
-
             for doc in documentsToSave {
                 group.addTask {
                     let documentURL = directory.appendingPathComponent("\(doc.id).json")
                     let encoder = JSONEncoder()
                     encoder.outputFormatting = .prettyPrinted
-
                     let data = try encoder.encode(doc)
                     try data.write(to: documentURL)
                 }
             }
-
             try await group.waitForAll()
         }
-
         return documentIds
     }
 
@@ -164,20 +153,23 @@ public class VecturaKit: VecturaProtocol {
     ///   - texts: The text contents of the documents.
     ///   - embeddings: Pre-computed embeddings for the documents.
     ///   - ids: Optional unique identifiers for the documents.
+    ///   - metadatas: Optional metadata for the documents.
     /// - Returns: The IDs of the added documents.
     public func addDocumentsWithEmbeddings(
         texts: [String],
         embeddings: [[Float]],
-        ids: [UUID]? = nil
+        ids: [UUID]? = nil,
+        metadatas: [[String: String]?]? = nil
     ) async throws -> [UUID] {
         if let ids = ids, ids.count != texts.count {
             throw VecturaError.invalidInput("Number of IDs must match number of texts")
         }
-        
+        if let metadatas = metadatas, metadatas.count != texts.count {
+            throw VecturaError.invalidInput("Number of metadatas must match number of texts")
+        }
         if texts.count != embeddings.count {
             throw VecturaError.invalidInput("Number of texts must match number of embeddings")
         }
-        
         for embedding in embeddings {
             if embedding.count != config.dimension {
                 throw VecturaError.dimensionMismatch(
@@ -186,21 +178,20 @@ public class VecturaKit: VecturaProtocol {
                 )
             }
         }
-        
         var documentIds = [UUID]()
         var documentsToSave = [VecturaDocument]()
-
         for i in 0..<texts.count {
             let docId = ids?[i] ?? UUID()
+            let metadata = metadatas?[i]
             let doc = VecturaDocument(
                 id: docId,
                 text: texts[i],
-                embedding: embeddings[i]
+                embedding: embeddings[i],
+                metadata: metadata
             )
             documentsToSave.append(doc)
             documentIds.append(docId)
         }
-
         for doc in documentsToSave {
             let norm = l2Norm(doc.embedding)
             var divisor = norm + 1e-9
@@ -209,39 +200,43 @@ public class VecturaKit: VecturaProtocol {
             normalizedEmbeddings[doc.id] = normalized
             documents[doc.id] = doc
         }
-
         let allDocs = Array(documents.values)
-
         bm25Index = BM25Index(
             documents: allDocs,
             k1: config.searchOptions.k1,
             b: config.searchOptions.b
         )
-
         try await withThrowingTaskGroup(of: Void.self) { group in
             let directory = self.storageDirectory
-
             for doc in documentsToSave {
                 group.addTask {
                     let documentURL = directory.appendingPathComponent("\(doc.id).json")
                     let encoder = JSONEncoder()
                     encoder.outputFormatting = .prettyPrinted
-
                     let data = try encoder.encode(doc)
                     try data.write(to: documentURL)
                 }
             }
-
             try await group.waitForAll()
         }
-
         return documentIds
+    }
+
+    /// Helper for metadata filter matching
+    private func matchesMetadataFilter(_ doc: VecturaDocument, filter: [String: String]?) -> Bool {
+        guard let filter = filter else { return true }
+        guard let metadata = doc.metadata else { return false }
+        for (key, value) in filter {
+            if metadata[key] != value { return false }
+        }
+        return true
     }
 
     public func search(
         query queryEmbedding: [Float],
         numResults: Int? = nil,
-        threshold: Float? = nil
+        threshold: Float? = nil,
+        filter: [String: String]? = nil
     ) async throws -> [VecturaSearchResult] {
         if queryEmbedding.count != config.dimension {
             throw VecturaError.dimensionMismatch(
@@ -249,60 +244,47 @@ public class VecturaKit: VecturaProtocol {
                 got: queryEmbedding.count
             )
         }
-
         // Normalize the query vector
         let norm = l2Norm(queryEmbedding)
         var divisor = norm + 1e-9
         var normalizedQuery = [Float](repeating: 0, count: queryEmbedding.count)
         vDSP_vsdiv(queryEmbedding, 1, &divisor, &normalizedQuery, 1, vDSP_Length(queryEmbedding.count))
-
         // Build a matrix of normalized document embeddings in row-major order
         var docIds = [UUID]()
         var matrix = [Float]()
-        matrix.reserveCapacity(documents.count * config.dimension)  // Pre-allocate for better performance
-
+        matrix.reserveCapacity(documents.count * config.dimension)
         for doc in documents.values {
-            if let normalized = normalizedEmbeddings[doc.id] {
+            if let normalized = normalizedEmbeddings[doc.id], matchesMetadataFilter(doc, filter: filter) {
                 docIds.append(doc.id)
                 matrix.append(contentsOf: normalized)
             }
         }
-
         let docsCount = docIds.count
         if docsCount == 0 {
             return []
         }
-
-        let M = Int32(docsCount)  // number of rows (documents)
-        let N = Int32(config.dimension)  // number of columns (embedding dimension)
+        let M = Int32(docsCount)
+        let N = Int32(config.dimension)
         var similarities = [Float](repeating: 0, count: docsCount)
-
-        // Convert Int32 to Int for LAPACK compatibility
-        let mInt = Int(M)  // Convert number of rows
-        let nInt = Int(N)  // Convert number of columns
-        let ldInt = Int(N) // Convert leading dimension
-
-        // Compute all similarities at once using matrix-vector multiplication
-        // Matrix is in row-major order, so we use CblasNoTrans
+        let mInt = Int(M)
+        let nInt = Int(N)
+        let ldInt = Int(N)
         cblas_sgemv(
-            CblasRowMajor,    // matrix layout
-            CblasNoTrans,     // no transpose needed for row-major
-            mInt,             // number of rows (documents) as Int
-            nInt,             // number of columns (dimension) as Int
-            1.0,              // alpha scaling factor
-            matrix,           // matrix
-            ldInt,            // leading dimension as Int
-            normalizedQuery,  // vector
-            1,                // vector increment
-            0.0,              // beta scaling factor
-            &similarities,    // result vector
-            1                 // result increment
+            CblasRowMajor,
+            CblasNoTrans,
+            mInt,
+            nInt,
+            1.0,
+            matrix,
+            ldInt,
+            normalizedQuery,
+            1,
+            0.0,
+            &similarities,
+            1
         )
-
-        // Construct the results
         var results = [VecturaSearchResult]()
-        results.reserveCapacity(docsCount)  // Pre-allocate for better performance
-
+        results.reserveCapacity(docsCount)
         for (i, similarity) in similarities.enumerated() {
             if let minT = threshold ?? config.searchOptions.minThreshold, similarity < minT {
                 continue
@@ -313,14 +295,13 @@ public class VecturaKit: VecturaProtocol {
                         id: doc.id,
                         text: doc.text,
                         score: similarity,
-                        createdAt: doc.createdAt
+                        createdAt: doc.createdAt,
+                        metadata: doc.metadata
                     )
                 )
             }
         }
-
         results.sort { $0.score > $1.score }
-
         let limit = numResults ?? config.searchOptions.defaultNumResults
         return Array(results.prefix(limit))
     }
@@ -329,7 +310,8 @@ public class VecturaKit: VecturaProtocol {
         query: String,
         numResults: Int? = nil,
         threshold: Float? = nil,
-        model: VecturaModelSource = .default
+        model: VecturaModelSource = .default,
+        filter: [String: String]? = nil
     ) async throws -> [VecturaSearchResult] {
         if bertModel == nil {
             bertModel = try await Bert.loadModelBundle(from: model)
@@ -355,7 +337,8 @@ public class VecturaKit: VecturaProtocol {
         let vectorResults = try await search(
             query: queryEmbeddingFloatArray,
             numResults: nil,
-            threshold: nil
+            threshold: nil,
+            filter: filter
         )
 
         let bm25Results =
@@ -376,7 +359,8 @@ public class VecturaKit: VecturaProtocol {
             let hybridScore = VecturaDocument(
                 id: result.id,
                 text: result.text,
-                embedding: []
+                embedding: [],
+                metadata: result.metadata
             ).hybridScore(
                 vectorScore: result.score,
                 bm25Score: bm25Score,
@@ -387,7 +371,8 @@ public class VecturaKit: VecturaProtocol {
                 id: result.id,
                 text: result.text,
                 score: hybridScore,
-                createdAt: result.createdAt
+                createdAt: result.createdAt,
+                metadata: result.metadata
             )
         }
 
@@ -406,10 +391,11 @@ public class VecturaKit: VecturaProtocol {
         query: String,
         numResults: Int? = nil,
         threshold: Float? = nil,
-        modelId: String = VecturaModelSource.defaultModelId
+        modelId: String = VecturaModelSource.defaultModelId,
+        filter: [String: String]? = nil
     ) async throws -> [VecturaSearchResult] {
         try await search(
-            query: query, numResults: numResults, threshold: threshold, model: .id(modelId))
+            query: query, numResults: numResults, threshold: threshold, model: .id(modelId), filter: filter)
     }
 
     /// Searches for documents using a pre-computed embedding from an external source.
@@ -419,12 +405,14 @@ public class VecturaKit: VecturaProtocol {
     ///   - queryEmbedding: The pre-computed embedding for the query text
     ///   - numResults: Optional limit on the number of results to return
     ///   - threshold: Optional minimum similarity threshold
+    ///   - filter: Optional metadata filter
     /// - Returns: An array of search results
     public func searchWithExternalEmbedding(
         queryText: String,
         queryEmbedding: [Float],
         numResults: Int? = nil,
-        threshold: Float? = nil
+        threshold: Float? = nil,
+        filter: [String: String]? = nil
     ) async throws -> [VecturaSearchResult] {
         if queryEmbedding.count != config.dimension {
             throw VecturaError.dimensionMismatch(
@@ -437,7 +425,8 @@ public class VecturaKit: VecturaProtocol {
         let vectorResults = try await search(
             query: queryEmbedding,
             numResults: nil,
-            threshold: nil
+            threshold: nil,
+            filter: filter
         )
         
         // Initialize BM25 index if needed
@@ -467,7 +456,8 @@ public class VecturaKit: VecturaProtocol {
             let hybridScore = VecturaDocument(
                 id: result.id,
                 text: result.text,
-                embedding: []
+                embedding: [],
+                metadata: result.metadata
             ).hybridScore(
                 vectorScore: result.score,
                 bm25Score: bm25Score,
@@ -478,7 +468,8 @@ public class VecturaKit: VecturaProtocol {
                 id: result.id,
                 text: result.text,
                 score: hybridScore,
-                createdAt: result.createdAt
+                createdAt: result.createdAt,
+                metadata: result.metadata
             )
         }
         
@@ -546,23 +537,86 @@ public class VecturaKit: VecturaProtocol {
         }
     }
 
+    /// Delete documents by metadata filter
+    public func deleteDocuments(filter: [String: String]) async throws {
+        let idsToDelete = documents.values.filter { matchesMetadataFilter($0, filter: filter) }.map { $0.id }
+        try await deleteDocuments(ids: idsToDelete)
+    }
+
     public func updateDocument(
         id: UUID,
         newText: String,
         model: VecturaModelSource = .default
     ) async throws {
+        let oldMetadata = documents[id]?.metadata
         try await deleteDocuments(ids: [id])
 
-        _ = try await addDocument(text: newText, id: id, model: model)
+        _ = try await addDocument(text: newText, id: id, model: model, metadata: oldMetadata)
     }
 
     @_disfavoredOverload
     public func updateDocument(
         id: UUID,
         newText: String,
-        modelId: String = VecturaModelSource.defaultModelId
+        modelId: String = VecturaModelSource.defaultModelId,
+        metadata: [String: String]? = nil
     ) async throws {
         try await updateDocument(id: id, newText: newText, model: .id(modelId))
+    }
+
+    /// Ingests a file by chunking its text and adding each chunk as a document with metadata.
+    /// - Parameters:
+    ///   - fileURL: The URL of the file to ingest.
+    ///   - chunkSize: The maximum number of characters per chunk.
+    ///   - overlap: The number of characters to overlap between chunks.
+    ///   - model: The embedding model to use.
+    ///   - fileID: The UUID to use as the originalFileID in metadata (or generate one if nil).
+    /// - Returns: The UUIDs of the created chunk documents.
+    public func ingestFileChunks(
+        fileURL: URL,
+        chunkSize: Int = 1000,
+        overlap: Int = 100,
+        model: VecturaModelSource = .default,
+        fileID: UUID? = nil
+    ) async throws -> [UUID] {
+        // 1. Try to read file content as plain text (UTF-8)
+        let fileText: String
+        do {
+            fileText = try String(contentsOf: fileURL, encoding: .utf8)
+        } catch {
+            throw VecturaError.invalidInput("File could not be read as plain text (UTF-8): \(fileURL.lastPathComponent)")
+        }
+        // 2. Chunk the text
+        var chunks: [String] = []
+        var start = 0
+        let length = fileText.count
+        let fileIDString = (fileID ?? UUID()).uuidString
+        let textArray = Array(fileText)
+        while start < length {
+            let end = min(start + chunkSize, length)
+            let chunk = String(textArray[start..<end])
+            chunks.append(chunk)
+            if end == length { break }
+            start = end - overlap
+            if start < 0 { start = 0 }
+        }
+        // 3. Prepare metadata for each chunk
+        let metadatas: [[String: String]] = chunks.enumerated().map { (i, chunkText) in
+            [
+                "originalFileID": fileIDString,
+                "chunkIndex": String(i),
+                "text": chunkText,
+                "type": "fileChunk"
+            ]
+        }
+        // 4. Add all chunks as documents
+        let chunkIDs = try await addDocuments(
+            texts: chunks,
+            ids: nil,
+            model: model,
+            metadatas: metadatas
+        )
+        return chunkIDs
     }
 
     // MARK: - Private
