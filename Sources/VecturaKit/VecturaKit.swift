@@ -336,18 +336,10 @@ public class VecturaKit: VecturaProtocol {
         let queryEmbeddingFloatArray = await tensorToArray(queryEmbeddingTensor)
         let vectorResults = try await search(
             query: queryEmbeddingFloatArray,
-            numResults: nil, // Fetch all potential results for logging/debugging
-            threshold: nil, // Fetch all potential results for logging/debugging
+            numResults: nil,
+            threshold: nil,
             filter: filter
         )
-
-        // --- TEMPORARY DEBUG LOGGING ---
-        if let exactMatchResult = vectorResults.first(where: { $0.text == query }) {
-            print("[DEBUG][VecturaKit] Raw vector similarity for exact match ('\(query)' - ID: \(exactMatchResult.id)): \(exactMatchResult.score)")
-        } else {
-            print("[DEBUG][VecturaKit] Exact match ('\(query)') not found in raw vector results.")
-        }
-        // --- END TEMPORARY DEBUG LOGGING ---
 
         let bm25Results =
         bm25Index?.search(

@@ -9,7 +9,8 @@ final class VecturaKitTests: XCTestCase {
     var config: VecturaConfig!
     
     override func setUp() async throws {
-        config = VecturaConfig(name: "test-db", dimension: 384)
+        let searchOptions = VecturaConfig.SearchOptions(hybridWeight: 1.0)
+        config = VecturaConfig(name: "test-db", dimension: 384, searchOptions: searchOptions)
         vectura = try await VecturaKit(config: config)
     }
     
@@ -251,32 +252,105 @@ final class VecturaKitTests: XCTestCase {
     }
 
     func testIngestFileChunks() async throws {
-        // Find the test file relative to this source file
-        let testFileName = "TestFile.txt"
-        let testFilePath: String
-        if let bundlePath = Bundle(for: type(of: self)).resourcePath {
-            testFilePath = bundlePath + "/" + testFileName
-        } else {
-            // Fallback: try relative to the source file
-            let thisFile = URL(fileURLWithPath: #file)
-            let testDir = thisFile.deletingLastPathComponent()
-            testFilePath = testDir.appendingPathComponent(testFileName).path
+        // Create a temporary file with multiple paragraphs to ensure it gets chunked
+        let fileContent = """
+        This is the first chunk of text that will be used to test the chunking functionality.
+        It needs to be long enough to span multiple chunks when using a small chunk size.
+        
+        This is the second paragraph that should end up in another chunk.
+        We want to make sure the chunking works correctly across paragraphs.
+        
+        Finally, this is the third section of text that should be in yet another chunk.
+        This way we can verify that all the metadata is properly attached to each chunk.
+        """
+        
+        // Create a temporary file
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("txt")
+        try fileContent.write(to: fileURL, atomically: true, encoding: .utf8)
+        
+        // Ensure cleanup
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fileURL)
         }
-        let fileURL = URL(fileURLWithPath: testFilePath)
-        let chunkIDs = try await vectura.ingestFileChunks(fileURL: fileURL, chunkSize: 40, overlap: 10)
-        XCTAssertGreaterThan(chunkIDs.count, 1)
+        
+        // Use a small chunk size to ensure multiple chunks
+        let chunkIDs = try await vectura.ingestFileChunks(fileURL: fileURL, chunkSize: 100, overlap: 10)
+        XCTAssertGreaterThan(chunkIDs.count, 1, "Text should be split into multiple chunks")
+        
         // All chunks should have metadata with originalFileID and chunkIndex
         let firstChunk = try await vectura.search(query: "first chunk", filter: ["chunkIndex": "0"])
         XCTAssertEqual(firstChunk.count, 1)
         let meta = firstChunk[0].metadata
-        XCTAssertNotNil(meta?["originalFileID"])
-        XCTAssertEqual(meta?["chunkIndex"], "0")
-        XCTAssertEqual(meta?["type"], "fileChunk")
-        XCTAssertNotNil(meta?["text"])
+        XCTAssertNotNil(meta?["originalFileID"], "Chunk should have originalFileID metadata")
+        XCTAssertEqual(meta?["chunkIndex"], "0", "First chunk should have index 0")
+        XCTAssertEqual(meta?["type"], "fileChunk", "Chunk should have type fileChunk")
+        XCTAssertNotNil(meta?["text"], "Chunk should have text metadata")
+        
         // Deletion by fileID
         let fileID = meta?["originalFileID"]
         try await vectura.deleteDocuments(filter: ["originalFileID": fileID!])
         let afterDelete = try await vectura.search(query: "chunk", filter: ["originalFileID": fileID!])
-        XCTAssertEqual(afterDelete.count, 0)
+        XCTAssertEqual(afterDelete.count, 0, "All chunks should be deleted")
+    }
+
+    func testExactMatchScoreWithChunking() async throws {
+        let queryText = "how many belts do i have?"
+
+        // 1. Create a temporary file
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("txt")
+        try queryText.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        // Ensure cleanup
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+
+        // 2. Ingest the file (will create one chunk)
+        let chunkIDs = try await vectura.ingestFileChunks(fileURL: fileURL, chunkSize: 50, overlap: 10) // Small chunk size to ensure it's chunked
+        XCTAssertEqual(chunkIDs.count, 1, "Ingesting the short text should result in one chunk.")
+        let chunkID = chunkIDs[0]
+
+        // 3. Search for the original text
+        let results = try await vectura.search(query: queryText, numResults: 1)
+
+        XCTAssertEqual(results.count, 1, "Should find exactly one result for the exact match.")
+        guard let result = results.first else {
+            XCTFail("Failed to get the first result.")
+            return
+        }
+
+        // 4. Assert score is close to 1.0
+        XCTAssertEqual(result.id, chunkID, "The found document ID should match the created chunk ID.")
+        XCTAssertEqual(result.text, queryText, "The found document text should match the query text.")
+        XCTAssertGreaterThan(result.score, 0.99, "Score for exact match via chunking should be very close to 1.0")
+        XCTAssertLessThanOrEqual(result.score, 1.0, "Score should not exceed 1.0")
+
+        print("[TEST] Exact match score (via chunking) for '\(queryText)': \(result.score)")
+    }
+
+    func testExactMatchScore() async throws {
+        let queryText = "how many belts do i have?"
+        let id = try await vectura.addDocument(text: queryText)
+
+        let results = try await vectura.search(query: queryText, numResults: 1)
+
+        XCTAssertEqual(results.count, 1, "Should find exactly one result for the exact match.")
+        guard let result = results.first else {
+            XCTFail("Failed to get the first result.")
+            return
+        }
+
+        XCTAssertEqual(result.id, id, "The found document ID should match the added document ID.")
+        XCTAssertEqual(result.text, queryText, "The found document text should match the query text.")
+
+        // Check if the score is very close to 1.0 (e.g., > 0.99)
+        // Cosine similarity of a vector with itself should be 1.0 after normalization.
+        // Allow for minor floating-point inaccuracies.
+        XCTAssertGreaterThan(result.score, 0.99, "Score for exact match should be very close to 1.0")
+        XCTAssertLessThanOrEqual(result.score, 1.0, "Score should not exceed 1.0")
+
+        print("[TEST] Exact match score for '\(queryText)': \(result.score)")
     }
 }
