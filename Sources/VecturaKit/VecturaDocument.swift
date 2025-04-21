@@ -38,6 +38,20 @@ public struct VecturaDocument: Identifiable, Codable, Sendable {
     ///   - weight: The weight to apply to the vector score (0.0 to 1.0).
     /// - Returns: A combined hybrid score.
     public func hybridScore(vectorScore: Float, bm25Score: Float, weight: Float = 0.5) -> Float {
+        // For pure vector search (weight = 1.0) or pure semantic search (weight = 0.0)
+        if weight >= 0.999 {
+            return vectorScore
+        } else if weight <= 0.001 {
+            // For pure BM25 search, return vector score if BM25 score is 0
+            // This ensures exact matches still work in pure BM25 mode
+            if bm25Score == 0 {
+                return vectorScore
+            }
+            // Normalize BM25 score to 0-1 range, clamping to ensure it's within bounds
+            return min(max(bm25Score / 10.0, 0), 1)
+        }
+        
+        // For hybrid search (weight between 0 and 1)
         // Normalize BM25 score to 0-1 range, clamping to ensure it's within bounds
         let normalizedBM25 = min(max(bm25Score / 10.0, 0), 1)
         
