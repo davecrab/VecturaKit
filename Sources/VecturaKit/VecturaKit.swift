@@ -565,20 +565,22 @@ public class VecturaKit: VecturaProtocol {
         return documents.count
     }
 
-    /// Retrieves the stored embedding for a specific document.
+    /// Retrieves the stored raw and normalized embeddings for a specific document.
     /// - Parameter id: The UUID of the document.
-    /// - Returns: The embedding vector as an array of Floats, or nil if the document is not found.
-    public func getDocumentEmbedding(id: UUID) -> [Float]? {
-        return documents[id]?.embedding
+    /// - Returns: A tuple containing the optional raw and normalized embedding vectors, or (nil, nil) if the document is not found.
+    public func getDocumentEmbedding(id: UUID) -> (raw: [Float]?, normalized: [Float]?) {
+        let rawEmbedding = documents[id]?.embedding
+        let normalizedEmbedding = normalizedEmbeddings[id]
+        return (raw: rawEmbedding, normalized: normalizedEmbedding)
     }
 
-    /// Generates and returns the embedding for a given query string using the specified model.
+    /// Generates and returns both the raw and normalized embeddings for a given query string using the specified model.
     /// - Parameters:
     ///   - query: The text query to embed.
     ///   - model: The embedding model source to use.
-    /// - Returns: The generated embedding vector as an array of Floats.
+    /// - Returns: A tuple containing the raw and normalized embedding vectors.
     /// - Throws: `VecturaError` if the model cannot be loaded or embedding fails.
-    public func getQueryEmbedding(query: String, model: VecturaModelSource = .default) async throws -> [Float] {
+    public func getQueryEmbedding(query: String, model: VecturaModelSource = .default) async throws -> (raw: [Float], normalized: [Float]) {
         if bertModel == nil {
             bertModel = try await Bert.loadModelBundle(from: model)
         }
@@ -586,16 +588,15 @@ public class VecturaKit: VecturaProtocol {
             throw VecturaError.invalidInput("Failed to load BERT model: \(model)")
         }
         let queryEmbeddingTensor = try modelBundle.encode(query)
-        let queryEmbeddingFloatArray = await tensorToArray(queryEmbeddingTensor)
+        let rawEmbedding = await tensorToArray(queryEmbeddingTensor)
         
-        // Optional: Add normalization if you want the exact embedding used in search
-        // let norm = l2Norm(queryEmbeddingFloatArray)
-        // var divisor = norm + 1e-9
-        // var normalizedQuery = [Float](repeating: 0, count: queryEmbeddingFloatArray.count)
-        // vDSP_vsdiv(queryEmbeddingFloatArray, 1, &divisor, &normalizedQuery, 1, vDSP_Length(queryEmbeddingFloatArray.count))
-        // return normalizedQuery // Return normalized if needed
+        // Normalize the query embedding
+        let norm = l2Norm(rawEmbedding)
+        var divisor = norm + 1e-9 // Add epsilon to prevent division by zero
+        var normalizedEmbedding = [Float](repeating: 0, count: rawEmbedding.count)
+        vDSP_vsdiv(rawEmbedding, 1, &divisor, &normalizedEmbedding, 1, vDSP_Length(rawEmbedding.count))
         
-        return queryEmbeddingFloatArray // Return raw embedding for now
+        return (raw: rawEmbedding, normalized: normalizedEmbedding)
     }
 
     /// Checks if a document with the specified ID exists in the database.
