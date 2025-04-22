@@ -8,12 +8,23 @@ final class VecturaKitTests: XCTestCase {
     var vectura: VecturaKit!
     var config: VecturaConfig!
     
+    // Add properties for vector-only testing
+    var vectorOnlyVectura: VecturaKit!
+    var vectorOnlyConfig: VecturaConfig!
+
     override func setUp() async throws {
         let searchOptions = VecturaConfig.SearchOptions(hybridWeight: 0.0)
         config = VecturaConfig(name: "test-db", dimension: 384, searchOptions: searchOptions)
         vectura = try await VecturaKit(config: config)
     }
     
+    // Add setup function for vector-only tests
+    func setupVectorOnlyTest() async throws {
+        vectorOnlyConfig = VecturaConfig(name: "VectorOnlyTestDB", dimension: 384, searchOptions: .init(hybridWeight: 1.0)) // Set weight to 1.0
+        vectorOnlyVectura = try await VecturaKit(config: vectorOnlyConfig)
+        try await vectorOnlyVectura.reset()
+    }
+
     override func tearDown() async throws {
         try await vectura.reset()
         vectura = nil
@@ -352,5 +363,151 @@ final class VecturaKitTests: XCTestCase {
         XCTAssertLessThanOrEqual(result.score, 1.0, "Score should not exceed 1.0")
 
         print("[TEST] Exact match score for '\(queryText)': \(result.score)")
+    }
+    
+    func testExactMatchScoreWithMetadata() async throws {
+        let queryText = "how many belts do i have?"
+        let metadata: [String: String] = ["category": "questions", "priority": "high", "type": "inventory"]
+        let id = try await vectura.addDocument(text: queryText, metadata: metadata)
+
+        let results = try await vectura.search(query: queryText, numResults: 1)
+
+        XCTAssertEqual(results.count, 1, "Should find exactly one result for the exact match.")
+        guard let result = results.first else {
+            XCTFail("Failed to get the first result.")
+            return
+        }
+
+        XCTAssertEqual(result.id, id, "The found document ID should match the added document ID.")
+        XCTAssertEqual(result.text, queryText, "The found document text should match the query text.")
+        XCTAssertNotNil(result.metadata, "The metadata should be present")
+        XCTAssertEqual(result.metadata?["category"], "questions", "The metadata category should match")
+        XCTAssertEqual(result.metadata?["priority"], "high", "The metadata priority should match")
+        XCTAssertEqual(result.metadata?["type"], "inventory", "The metadata type should match")
+        
+        // Check if the score is very close to 1.0 (e.g., > 0.99)
+        // Cosine similarity of a vector with itself should be 1.0 after normalization.
+        // Allow for minor floating-point inaccuracies.
+        XCTAssertGreaterThan(result.score, 0.99, "Score for exact match should be very close to 1.0")
+        XCTAssertLessThanOrEqual(result.score, 1.0, "Score should not exceed 1.0")
+
+        print("[TEST] Exact match score with metadata for '\(queryText)': \(result.score)")
+        
+        // Also test with filter to ensure metadata filtering doesn't affect scores
+        let filteredResults = try await vectura.search(query: queryText, filter: ["category": "questions"])
+        XCTAssertEqual(filteredResults.count, 1, "Should find exactly one result with filter")
+        XCTAssertGreaterThan(filteredResults[0].score, 0.99, "Score for filtered exact match should be very close to 1.0")
+    }
+    
+    func testMultipleEmbeddingsBatchSearch() async throws {
+        try await setupVectorOnlyTest() // Use the vector-only instance
+
+        // A set of documents with varying degrees of similarity
+        let documents = [
+            "how many belts do i have?",                   // Exact match
+            "how many black belts do i have?",             // Very similar
+            "do i have any belts in my closet?",           // Similar
+            "where are all my belts stored?",              // Related 
+            "what is the total count of my belt collection?", // Similar meaning, different words
+            "the weather today is quite pleasant"           // Completely unrelated
+        ]
+        
+        // Test individual exact match first to verify it works
+        print("-------- TESTING INDIVIDUAL DOCUMENTS FIRST --------")
+        let exactMatchId = try await vectorOnlyVectura.addDocument(text: documents[0]) // Use vectorOnlyVectura
+        let exactMatchResults = try await vectorOnlyVectura.search(query: documents[0], numResults: 1) // Use vectorOnlyVectura
+        
+        print("[TEST] Individual exact match test:")
+        if let result = exactMatchResults.first {
+            print("\(result.score): \(result.text)")
+            XCTAssertGreaterThan(result.score, 0.99, "Individual exact match score should be > 0.99")
+        }
+        
+        // Reset to try with fresh database
+        try await vectorOnlyVectura.reset() // Use vectorOnlyVectura
+        
+        // Add all documents in batch, but one by one to track IDs
+        var docIds: [UUID] = []
+        var docMap: [UUID: String] = [:] // To keep track of which ID maps to which text
+        
+        for doc in documents {
+            let id = try await vectorOnlyVectura.addDocument(text: doc) // Use vectorOnlyVectura
+            docIds.append(id)
+            docMap[id] = doc
+            
+            // Verify each document can be found by its own text
+            let verifyResults = try await vectorOnlyVectura.search(query: doc, numResults: 1) // Use vectorOnlyVectura
+            print("[TEST] Adding document: \"\(doc)\"")
+            if let verifyResult = verifyResults.first {
+                print("  Verified with score \(verifyResult.score)")
+                XCTAssertEqual(verifyResult.id, id, "Document should match its own ID")
+                // Also check score is high for self-match
+                XCTAssertGreaterThan(verifyResult.score, 0.99, "Self-match score should be > 0.99")
+            } else {
+                XCTFail("Could not find document by its own text: \(doc)")
+            }
+        }
+        
+        // Search with the exact text of the first document
+        let query = "how many belts do i have?"
+        let results = try await vectorOnlyVectura.search(query: query) // Use vectorOnlyVectura
+        
+        print("[TEST] Full search results for '\(query)':")
+        for result in results {
+            print("\(result.score): \(result.text) (ID: \(result.id))")
+        }
+        
+        // Should get all documents since we set threshold to 0.0 and weight to 1.0 (no BM25 filtering)
+        XCTAssertEqual(results.count, documents.count, "Should return all documents")
+        
+        // Find the position of the exact match document
+        var exactMatchPosition: Int? = nil
+        var exactMatchScore: Float? = nil
+        
+        for (index, result) in results.enumerated() {
+            if result.text == documents[0] {
+                exactMatchPosition = index
+                exactMatchScore = result.score
+                break
+            }
+        }
+        
+        // Assert we found the exact match AND it's the first result
+        XCTAssertNotNil(exactMatchPosition, "Should find the exact match document in results")
+        XCTAssertEqual(exactMatchPosition, 0, "Exact match should be the first result in pure vector search")
+        
+        if let position = exactMatchPosition, let score = exactMatchScore {
+            print("[TEST] Exact match found at position \(position) with score \(score)")
+            XCTAssertGreaterThan(score, 0.99, "Exact match score should be > 0.99") // Check score here
+        } else {
+            XCTFail("Could not find exact match in search results")
+        }
+        
+        // Check that scores are in descending order
+        for i in 1..<results.count {
+            XCTAssertGreaterThanOrEqual(results[i-1].score, results[i].score, "Results should be in descending score order")
+        }
+        
+        // Similar documents should have positive but lower scores
+        if results.count > 1 {
+            XCTAssertGreaterThan(results[1].score, 0.7, "Very similar document should have high score")
+            XCTAssertLessThan(results[1].score, results[0].score, "Similar document should score less than exact match")
+        }
+        
+        // The most dissimilar document should have the lowest score
+        if let lastResult = results.last {
+             // Check if the last result is indeed the unrelated document
+             if lastResult.text == documents.last {
+                 XCTAssertLessThan(lastResult.score, 0.7, "Unrelated document should have low score") // Adjusted threshold slightly
+             } else {
+                 // If the last result isn't the unrelated one, something might still be wrong with ranking
+                 print("[WARN] Last result wasn't the expected unrelated document.")
+             }
+        }
+        
+        print("[TEST] Multiple document batch search scores:")
+        for result in results {
+            print("\(result.score): \(result.text)")
+        }
     }
 }

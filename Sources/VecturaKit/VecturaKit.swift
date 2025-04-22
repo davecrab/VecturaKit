@@ -86,6 +86,8 @@ public class VecturaKit: VecturaProtocol {
         guard let modelBundle = bertModel else {
             throw VecturaError.invalidInput("Failed to load BERT model: \(model)")
         }
+        
+        // --- REVERTED TO BATCH CODE ---
         let embeddingsTensor = try modelBundle.batchEncode(texts)
         let shape = embeddingsTensor.shape
         if shape.count != 2 {
@@ -108,6 +110,10 @@ public class VecturaKit: VecturaProtocol {
             let embeddingRow = Array(allScalars[startIndex..<endIndex])
             let docId = ids?[i] ?? UUID()
             let metadata = metadatas?[i]
+            
+            print("[DEBUG] AddDocuments - Raw embedding for '\(texts[i].prefix(30))...': \(embeddingRow.prefix(5))... (len: \(embeddingRow.count))")
+            print("[DEBUG] AddDocuments - L2 norm: \(l2Norm(embeddingRow))")
+            
             let doc = VecturaDocument(
                 id: docId,
                 text: texts[i],
@@ -117,6 +123,8 @@ public class VecturaKit: VecturaProtocol {
             documentsToSave.append(doc)
             documentIds.append(docId)
         }
+        // --- END REVERTED BATCH CODE ---
+        
         for doc in documentsToSave {
             let norm = l2Norm(doc.embedding)
             var divisor = norm + 1e-9
@@ -124,6 +132,7 @@ public class VecturaKit: VecturaProtocol {
             vDSP_vsdiv(doc.embedding, 1, &divisor, &normalized, 1, vDSP_Length(doc.embedding.count))
             normalizedEmbeddings[doc.id] = normalized
             documents[doc.id] = doc
+            print("[DEBUG] AddDocuments - Stored Normalized embedding for '\(doc.text.prefix(30))...': \(normalized.prefix(5))...")
         }
         let allDocs = Array(documents.values)
         bm25Index = BM25Index(
@@ -255,27 +264,40 @@ public class VecturaKit: VecturaProtocol {
         vDSP_vsdiv(queryEmbedding, 1, &divisor, &normalizedQuery, 1, vDSP_Length(queryEmbedding.count))
         print("[DEBUG] Search - Normalized query embedding: \(normalizedQuery.prefix(5))...")
         // Build a matrix of normalized document embeddings in row-major order
-        var docIds = [UUID]()
+
+        // 1. Get IDs of documents matching the filter
+        let matchingDocIDs = documents.values
+            .filter { matchesMetadataFilter($0, filter: filter) }
+            .map { $0.id }
+
+        // 2. Sort the IDs for stable order
+        let sortedDocIDs = matchingDocIDs.sorted { $0.uuidString < $1.uuidString }
+
         var matrix = [Float]()
-        matrix.reserveCapacity(documents.count * config.dimension)
+        matrix.reserveCapacity(sortedDocIDs.count * config.dimension)
         print("[DEBUG] Search - Total documents to check: \(documents.count)")
-        var docCount = 0
-        var matchCount = 0
-        for doc in documents.values {
-            docCount += 1
-            if let normalized = normalizedEmbeddings[doc.id], matchesMetadataFilter(doc, filter: filter) {
-                matchCount += 1
-                if docIds.isEmpty {
-                    print("[DEBUG] Search - First doc normalized embedding: \(normalized.prefix(5))...")
-                    print("[DEBUG] Search - First doc raw text: \(doc.text.prefix(50))...")
-                }
-                docIds.append(doc.id)
+        print("[DEBUG] Search - Found \(sortedDocIDs.count) documents matching filter")
+
+        // 3. Iterate over sorted IDs to build matrix
+        for docID in sortedDocIDs {
+            if let normalized = normalizedEmbeddings[docID] {
+                // Append embedding to matrix
                 matrix.append(contentsOf: normalized)
+                // Log the first one for verification
+                if matrix.count == config.dimension { // Only log the first full embedding added
+                     print("[DEBUG] Search - First doc normalized embedding (from sorted list): \(normalized.prefix(5))...")
+                     if let doc = documents[docID] {
+                         print("[DEBUG] Search - First doc raw text (from sorted list): \(doc.text.prefix(50))...")
+                     }
+                }
+            } else {
+                 // This should ideally not happen if normalizedEmbeddings is kept in sync
+                 print("[WARN] Search - Missing normalized embedding for doc ID: \(docID)")
             }
         }
-        print("[DEBUG] Search - Found \(matchCount) documents matching filter out of \(docCount) checked")
-        let docsCount = docIds.count
-        print("[DEBUG] Search - Document IDs count: \(docsCount)")
+
+        let docsCount = sortedDocIDs.count // Use count from sorted IDs
+        print("[DEBUG] Search - Document IDs count (after sorting): \(docsCount)")
         if docsCount == 0 {
             print("[DEBUG] Search - No matching documents, returning empty results")
             return []
@@ -289,14 +311,14 @@ public class VecturaKit: VecturaProtocol {
         print("[DEBUG] Search - Matrix dimensions: \(mInt)x\(nInt)")
         
         // As a sanity check, manually calculate the dot product for the first document
-        if !docIds.isEmpty {
-            let firstDocId = docIds[0]
+        if !sortedDocIDs.isEmpty { // Use sortedDocIDs
+            let firstDocId = sortedDocIDs[0] // Use sortedDocIDs
             if let firstNormalized = normalizedEmbeddings[firstDocId] {
                 var manualDotProduct: Float = 0
                 for i in 0..<min(normalizedQuery.count, firstNormalized.count) {
                     manualDotProduct += normalizedQuery[i] * firstNormalized[i]
                 }
-                print("[DEBUG] Search - Manual dot product with first doc: \(manualDotProduct)")
+                print("[DEBUG] Search - Manual dot product with first doc (from sorted list): \(manualDotProduct)")
             }
         }
         
@@ -323,30 +345,37 @@ public class VecturaKit: VecturaProtocol {
             }
         }
         
+        // --- Modify result creation loop ---
         var results = [VecturaSearchResult]()
         results.reserveCapacity(docsCount)
         var filteredOut = 0
-        
+
         print("[DEBUG] Search - Threshold: \(threshold ?? config.searchOptions.minThreshold ?? 0)")
-        
+
+        // 4. Use sortedDocIDs when creating results
         for (i, similarity) in similarities.enumerated() {
             if let minT = threshold ?? config.searchOptions.minThreshold, similarity < minT {
                 filteredOut += 1
                 continue
             }
-            if let doc = documents[docIds[i]] {
+            // Use the ID from the sorted list corresponding to the similarity index
+            let currentDocID = sortedDocIDs[i]
+            if let doc = documents[currentDocID] { // Fetch doc using the correct ID
                 results.append(
                     VecturaSearchResult(
                         id: doc.id,
                         text: doc.text,
-                        score: similarity,
+                        score: similarity, // Score corresponds to this ID due to sorted order
                         createdAt: doc.createdAt,
                         metadata: doc.metadata
                     )
                 )
+            } else {
+                 print("[WARN] Search - Missing document for doc ID from sorted list: \(currentDocID)")
             }
         }
-        
+        // --- End modification ---
+
         print("[DEBUG] Search - \(filteredOut) results filtered out by threshold")
         print("[DEBUG] Search - Final results count: \(results.count)")
         results.sort { $0.score > $1.score }
@@ -382,6 +411,7 @@ public class VecturaKit: VecturaProtocol {
         // Get vector similarity results
         let queryEmbeddingTensor = try modelBundle.encode(query)
         let queryEmbeddingFloatArray = await tensorToArray(queryEmbeddingTensor)
+        print("[DEBUG] Search - Raw query embedding for '\(query.prefix(30))...': \(queryEmbeddingFloatArray.prefix(5))...")
         let vectorResults = try await search(
             query: queryEmbeddingFloatArray,
             numResults: nil,
