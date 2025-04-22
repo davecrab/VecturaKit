@@ -87,7 +87,6 @@ public class VecturaKit: VecturaProtocol {
             throw VecturaError.invalidInput("Failed to load BERT model: \(model)")
         }
         
-        // --- REVERTED TO BATCH CODE ---
         let embeddingsTensor = try modelBundle.batchEncode(texts)
         let shape = embeddingsTensor.shape
         if shape.count != 2 {
@@ -123,7 +122,6 @@ public class VecturaKit: VecturaProtocol {
             documentsToSave.append(doc)
             documentIds.append(docId)
         }
-        // --- END REVERTED BATCH CODE ---
         
         for doc in documentsToSave {
             let norm = l2Norm(doc.embedding)
@@ -566,7 +564,40 @@ public class VecturaKit: VecturaProtocol {
     public func documentCount() -> Int {
         return documents.count
     }
-    
+
+    /// Retrieves the stored embedding for a specific document.
+    /// - Parameter id: The UUID of the document.
+    /// - Returns: The embedding vector as an array of Floats, or nil if the document is not found.
+    public func getDocumentEmbedding(id: UUID) -> [Float]? {
+        return documents[id]?.embedding
+    }
+
+    /// Generates and returns the embedding for a given query string using the specified model.
+    /// - Parameters:
+    ///   - query: The text query to embed.
+    ///   - model: The embedding model source to use.
+    /// - Returns: The generated embedding vector as an array of Floats.
+    /// - Throws: `VecturaError` if the model cannot be loaded or embedding fails.
+    public func getQueryEmbedding(query: String, model: VecturaModelSource = .default) async throws -> [Float] {
+        if bertModel == nil {
+            bertModel = try await Bert.loadModelBundle(from: model)
+        }
+        guard let modelBundle = bertModel else {
+            throw VecturaError.invalidInput("Failed to load BERT model: \(model)")
+        }
+        let queryEmbeddingTensor = try modelBundle.encode(query)
+        let queryEmbeddingFloatArray = await tensorToArray(queryEmbeddingTensor)
+        
+        // Optional: Add normalization if you want the exact embedding used in search
+        // let norm = l2Norm(queryEmbeddingFloatArray)
+        // var divisor = norm + 1e-9
+        // var normalizedQuery = [Float](repeating: 0, count: queryEmbeddingFloatArray.count)
+        // vDSP_vsdiv(queryEmbeddingFloatArray, 1, &divisor, &normalizedQuery, 1, vDSP_Length(queryEmbeddingFloatArray.count))
+        // return normalizedQuery // Return normalized if needed
+        
+        return queryEmbeddingFloatArray // Return raw embedding for now
+    }
+
     /// Checks if a document with the specified ID exists in the database.
     /// - Parameter id: The UUID of the document to check
     /// - Returns: `true` if the document exists, `false` otherwise

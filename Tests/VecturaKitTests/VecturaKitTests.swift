@@ -13,7 +13,7 @@ final class VecturaKitTests: XCTestCase {
     var vectorOnlyConfig: VecturaConfig!
 
     override func setUp() async throws {
-        let searchOptions = VecturaConfig.SearchOptions(hybridWeight: 0.0)
+        let searchOptions = VecturaConfig.SearchOptions(hybridWeight: 1.0)
         config = VecturaConfig(name: "test-db", dimension: 384, searchOptions: searchOptions)
         vectura = try await VecturaKit(config: config)
     }
