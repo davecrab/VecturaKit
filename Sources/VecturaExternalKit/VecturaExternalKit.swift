@@ -276,6 +276,64 @@ public class VecturaExternalKit: VecturaProtocol {
         }
     }
 
+    public func deleteDocuments(ids: [UUID]) async throws {
+        for id in ids {
+            // Remove from in-memory storage
+            documents[id] = nil
+            normalizedEmbeddings[id] = nil
+            
+            // Remove from file storage
+            let documentURL = storageDirectory.appendingPathComponent("\(id).json")
+            if FileManager.default.fileExists(atPath: documentURL.path(percentEncoded: false)) {
+                try FileManager.default.removeItem(at: documentURL)
+            }
+        }
+        
+        // Rebuild BM25 index
+        let allDocs = Array(documents.values)
+        if !allDocs.isEmpty {
+            bm25Index = BM25Index(
+                documents: allDocs,
+                k1: config.searchOptions.k1,
+                b: config.searchOptions.b
+            )
+        } else {
+            bm25Index = nil
+        }
+    }
+
+    /// Updates a document with new text and embedding.
+    /// - Parameters:
+    ///   - id: The UUID of the document to update.
+    ///   - newText: The new text content for the document.
+    ///   - newEmbedding: The new pre-computed embedding for the document.
+    public func updateDocument(id: UUID, newText: String, newEmbedding: [Float]) async throws {
+        guard newEmbedding.count == config.dimension else {
+            throw VecturaError.dimensionMismatch(
+                expected: config.dimension,
+                got: newEmbedding.count
+            )
+        }
+        
+        let oldMetadata = documents[id]?.metadata
+        try await deleteDocuments(ids: [id])
+        _ = try await addDocumentsWithEmbeddings(
+            texts: [newText],
+            embeddings: [newEmbedding],
+            ids: [id],
+            metadatas: [oldMetadata]
+        )
+    }
+
+    /// Retrieves the stored raw and normalized embeddings for a specific document.
+    /// - Parameter id: The UUID of the document.
+    /// - Returns: A tuple containing the optional raw and normalized embedding vectors, or (nil, nil) if the document is not found.
+    public func getDocumentEmbedding(id: UUID) -> (raw: [Float]?, normalized: [Float]?) {
+        let rawEmbedding = documents[id]?.embedding
+        let normalizedEmbedding = normalizedEmbeddings[id]
+        return (raw: rawEmbedding, normalized: normalizedEmbedding)
+    }
+
     // MARK: - Private Helper Methods
 
     private func dotProduct(_ a: [Float], _ b: [Float]) -> Float {
