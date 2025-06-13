@@ -31,4 +31,4 @@ public enum VecturaError: LocalizedError {
             "Invalid input: \(reason)"
         }
     }
-}
+} 

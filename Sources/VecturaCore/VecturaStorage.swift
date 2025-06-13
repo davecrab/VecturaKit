@@ -27,4 +27,4 @@ public protocol VecturaStorage {
     ///
     /// - Parameter document: The updated document.
     func updateDocument(_ document: VecturaDocument) async throws
-}
+} 

@@ -2,10 +2,11 @@ import Accelerate
 import CoreML
 import Embeddings
 import Foundation
+import VecturaCore
 
 @available(macOS 15.0, iOS 18.0, tvOS 18.0, visionOS 2.0, watchOS 11.0, *)
 /// A vector database implementation that stores and searches documents using their vector embeddings.
-public class VecturaKit: VecturaProtocol {
+public class VecturaKit: VecturaEmbeddingProtocol {
 
     /// The configuration for this vector database instance.
     private let config: VecturaConfig
@@ -245,138 +246,67 @@ public class VecturaKit: VecturaProtocol {
         threshold: Float? = nil,
         filter: [String: String]? = nil
     ) async throws -> [VecturaSearchResult] {
+        guard !queryEmbedding.isEmpty else {
+            throw VecturaError.invalidInput("Query embedding cannot be empty")
+        }
+        
         if queryEmbedding.count != config.dimension {
             throw VecturaError.dimensionMismatch(
                 expected: config.dimension,
                 got: queryEmbedding.count
             )
         }
-        print("[DEBUG] Search - Raw query embedding: \(queryEmbedding.prefix(5))... (len: \(queryEmbedding.count))")
-        print("[DEBUG] Search - hybridWeight: \(config.searchOptions.hybridWeight)")
-        
-        // Normalize the query vector
-        let norm = l2Norm(queryEmbedding)
-        print("[DEBUG] Search - Query embedding L2 norm: \(norm)")
-        var divisor = norm + 1e-9
+
+        // Normalize query embedding
+        let queryNorm = l2Norm(queryEmbedding)
+        var queryDivisor = queryNorm + 1e-9
         var normalizedQuery = [Float](repeating: 0, count: queryEmbedding.count)
-        vDSP_vsdiv(queryEmbedding, 1, &divisor, &normalizedQuery, 1, vDSP_Length(queryEmbedding.count))
-        print("[DEBUG] Search - Normalized query embedding: \(normalizedQuery.prefix(5))...")
-        // Build a matrix of normalized document embeddings in row-major order
+        vDSP_vsdiv(queryEmbedding, 1, &queryDivisor, &normalizedQuery, 1, vDSP_Length(queryEmbedding.count))
 
-        // 1. Get IDs of documents matching the filter
-        let matchingDocIDs = documents.values
-            .filter { matchesMetadataFilter($0, filter: filter) }
-            .map { $0.id }
+        var results: [VecturaSearchResult] = []
 
-        // 2. Sort the IDs for stable order
-        let sortedDocIDs = matchingDocIDs.sorted { $0.uuidString < $1.uuidString }
-
-        var matrix = [Float]()
-        matrix.reserveCapacity(sortedDocIDs.count * config.dimension)
-        print("[DEBUG] Search - Total documents to check: \(documents.count)")
-        print("[DEBUG] Search - Found \(sortedDocIDs.count) documents matching filter")
-
-        // 3. Iterate over sorted IDs to build matrix
-        for docID in sortedDocIDs {
-            if let normalized = normalizedEmbeddings[docID] {
-                // Append embedding to matrix
-                matrix.append(contentsOf: normalized)
-                // Log the first one for verification
-                if matrix.count == config.dimension { // Only log the first full embedding added
-                     print("[DEBUG] Search - First doc normalized embedding (from sorted list): \(normalized.prefix(5))...")
-                     if let doc = documents[docID] {
-                         print("[DEBUG] Search - First doc raw text (from sorted list): \(doc.text.prefix(50))...")
-                     }
-                }
-            } else {
-                 // This should ideally not happen if normalizedEmbeddings is kept in sync
-                 print("[WARN] Search - Missing normalized embedding for doc ID: \(docID)")
-            }
-        }
-
-        let docsCount = sortedDocIDs.count // Use count from sorted IDs
-        print("[DEBUG] Search - Document IDs count (after sorting): \(docsCount)")
-        if docsCount == 0 {
-            print("[DEBUG] Search - No matching documents, returning empty results")
-            return []
-        }
-        let M = Int32(docsCount)
-        let N = Int32(config.dimension)
-        var similarities = [Float](repeating: 0, count: docsCount)
-        let mInt = Int(M)
-        let nInt = Int(N)
-        let ldInt = Int(N)
-        print("[DEBUG] Search - Matrix dimensions: \(mInt)x\(nInt)")
-        
-        // As a sanity check, manually calculate the dot product for the first document
-        if !sortedDocIDs.isEmpty { // Use sortedDocIDs
-            let firstDocId = sortedDocIDs[0] // Use sortedDocIDs
-            if let firstNormalized = normalizedEmbeddings[firstDocId] {
-                var manualDotProduct: Float = 0
-                for i in 0..<min(normalizedQuery.count, firstNormalized.count) {
-                    manualDotProduct += normalizedQuery[i] * firstNormalized[i]
-                }
-                print("[DEBUG] Search - Manual dot product with first doc (from sorted list): \(manualDotProduct)")
-            }
-        }
-        
-        cblas_sgemv(
-            CblasRowMajor,
-            CblasNoTrans,
-            mInt,
-            nInt,
-            1.0,
-            matrix,
-            ldInt,
-            normalizedQuery,
-            1,
-            0.0,
-            &similarities,
-            1
-        )
-        
-        print("[DEBUG] Search - Calculated \(similarities.count) similarity values")
-        if !similarities.isEmpty {
-            print("[DEBUG] Search - First few similarity values: \(similarities.prefix(min(3, similarities.count)))")
-            if let maxSim = similarities.max() {
-                print("[DEBUG] Search - Max similarity value: \(maxSim)")
-            }
-        }
-        
-        // --- Modify result creation loop ---
-        var results = [VecturaSearchResult]()
-        results.reserveCapacity(docsCount)
-        var filteredOut = 0
-
-        print("[DEBUG] Search - Threshold: \(threshold ?? config.searchOptions.minThreshold ?? 0)")
-
-        // 4. Use sortedDocIDs when creating results
-        for (i, similarity) in similarities.enumerated() {
-            if let minT = threshold ?? config.searchOptions.minThreshold, similarity < minT {
-                filteredOut += 1
+        for doc in documents.values {
+            // Apply metadata filter if provided
+            if !matchesMetadataFilter(doc, filter: filter) {
                 continue
             }
-            // Use the ID from the sorted list corresponding to the similarity index
-            let currentDocID = sortedDocIDs[i]
-            if let doc = documents[currentDocID] { // Fetch doc using the correct ID
-                results.append(
-                    VecturaSearchResult(
-                        id: doc.id,
-                        text: doc.text,
-                        score: similarity, // Score corresponds to this ID due to sorted order
-                        createdAt: doc.createdAt,
-                        metadata: doc.metadata
-                    )
-                )
-            } else {
-                 print("[WARN] Search - Missing document for doc ID from sorted list: \(currentDocID)")
-            }
-        }
-        // --- End modification ---
+            
+            guard let normDoc = normalizedEmbeddings[doc.id] else { continue }
+            let vectorSimilarity = dotProduct(normalizedQuery, normDoc)
 
-        print("[DEBUG] Search - \(filteredOut) results filtered out by threshold")
-        print("[DEBUG] Search - Final results count: \(results.count)")
+            // Apply threshold if specified
+            if let minT = threshold ?? config.searchOptions.minThreshold, vectorSimilarity < minT {
+                continue
+            }
+
+            // For pure vector search (weight = 1.0) or when BM25 index is not available
+            let finalScore: Float
+            if config.searchOptions.hybridWeight >= 0.999 || bm25Index == nil {
+                finalScore = vectorSimilarity
+            } else {
+                // Hybrid search: combine vector similarity with BM25 score
+                let bm25Results = bm25Index?.search(query: "", topK: documents.count) ?? []
+                let bm25Score = bm25Results.first(where: { $0.document.id == doc.id })?.score ?? 0.0
+                finalScore = doc.hybridScore(
+                    vectorScore: vectorSimilarity,
+                    bm25Score: bm25Score,
+                    weight: config.searchOptions.hybridWeight
+                )
+            }
+
+            results.append(
+                VecturaSearchResult(
+                    id: doc.id,
+                    text: doc.text,
+                    score: finalScore,
+                    createdAt: doc.createdAt,
+                    metadata: doc.metadata
+                )
+            )
+        }
+
         results.sort { $0.score > $1.score }
+
         let limit = numResults ?? config.searchOptions.defaultNumResults
         return Array(results.prefix(limit))
     }
@@ -610,16 +540,15 @@ public class VecturaKit: VecturaProtocol {
     /// - Parameter ids: An array of UUIDs to check
     /// - Returns: A dictionary mapping each UUID to a boolean indicating whether it exists
     public func documentsExist(ids: [UUID]) -> [UUID: Bool] {
-        var results: [UUID: Bool] = [:]
-        for id in ids {
-            results[id] = documents[id] != nil
+        return ids.reduce(into: [:]) { result, id in
+            result[id] = documents[id] != nil
         }
-        return results
     }
 
     public func reset() async throws {
         documents.removeAll()
         normalizedEmbeddings.removeAll()
+        bm25Index = nil
 
         let files = try FileManager.default.contentsOfDirectory(
             at: storageDirectory, includingPropertiesForKeys: nil)
@@ -628,29 +557,57 @@ public class VecturaKit: VecturaProtocol {
         }
     }
 
-    public func deleteDocuments(ids: [UUID]) async throws {
-        if bm25Index != nil {
-            let remainingDocs = documents.values.filter { !ids.contains($0.id) }
+    public func deleteDocuments(filter: [String: String]) async throws {
+        let documentsToDelete = documents.values.filter { doc in
+            matchesMetadataFilter(doc, filter: filter)
+        }
+        
+        for doc in documentsToDelete {
+            documents[doc.id] = nil
+            normalizedEmbeddings[doc.id] = nil
+            
+            let documentURL = storageDirectory.appendingPathComponent("\(doc.id).json")
+            try FileManager.default.removeItem(at: documentURL)
+        }
+        
+        // Rebuild BM25 index
+        let allDocs = Array(documents.values)
+        if !allDocs.isEmpty {
             bm25Index = BM25Index(
-                documents: Array(remainingDocs),
+                documents: allDocs,
                 k1: config.searchOptions.k1,
                 b: config.searchOptions.b
             )
-        }
-
-        for id in ids {
-            documents[id] = nil
-            normalizedEmbeddings[id] = nil
-
-            let documentURL = storageDirectory.appendingPathComponent("\(id).json")
-            try FileManager.default.removeItem(at: documentURL)
+        } else {
+            bm25Index = nil
         }
     }
 
-    /// Delete documents by metadata filter
-    public func deleteDocuments(filter: [String: String]) async throws {
-        let idsToDelete = documents.values.filter { matchesMetadataFilter($0, filter: filter) }.map { $0.id }
-        try await deleteDocuments(ids: idsToDelete)
+    /// Delete documents by IDs (internal helper)
+    private func performDeleteDocumentsByIDs(_ ids: [UUID]) async throws {
+        for id in ids {
+            guard let doc = documents[id] else { continue }
+            documents[id] = nil
+            normalizedEmbeddings[id] = nil
+            let documentURL = storageDirectory.appendingPathComponent("\(doc.id).json")
+            try FileManager.default.removeItem(at: documentURL)
+        }
+        // Rebuild BM25 index
+        let allDocs = Array(documents.values)
+        if !allDocs.isEmpty {
+            bm25Index = BM25Index(
+                documents: allDocs,
+                k1: config.searchOptions.k1,
+                b: config.searchOptions.b
+            )
+        } else {
+            bm25Index = nil
+        }
+    }
+
+    /// Public API: Delete documents by IDs
+    public func deleteDocuments(ids: [UUID]) async throws {
+        try await performDeleteDocumentsByIDs(ids)
     }
 
     public func updateDocument(
@@ -659,7 +616,7 @@ public class VecturaKit: VecturaProtocol {
         model: VecturaModelSource = .default
     ) async throws {
         let oldMetadata = documents[id]?.metadata
-        try await deleteDocuments(ids: [id])
+        try await performDeleteDocumentsByIDs([id])
 
         _ = try await addDocument(text: newText, id: id, model: model, metadata: oldMetadata)
     }

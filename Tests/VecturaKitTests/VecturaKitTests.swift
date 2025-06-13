@@ -2,6 +2,7 @@ import XCTest
 
 @testable import VecturaKit
 import Embeddings
+import VecturaCore
 
 @available(macOS 15.0, iOS 18.0, tvOS 18.0, visionOS 2.0, watchOS 11.0, *)
 final class VecturaKitTests: XCTestCase {
@@ -156,7 +157,11 @@ final class VecturaKitTests: XCTestCase {
         
         // Test with threshold = 1.0 (exact match only)
         let perfectResults = try await vectura.search(query: "Test document", threshold: 1.0)
-        XCTAssertEqual(perfectResults.count, 0)  // Should find no perfect matches due to encoding differences
+        XCTAssertEqual(perfectResults.count, 1)  // Should find exact match since embeddings are identical
+        
+        // Test with threshold = 1.0 and different query (should find no results)
+        let noResults = try await vectura.search(query: "completely different text", threshold: 1.0)
+        XCTAssertEqual(noResults.count, 0)  // Should find no results due to low similarity
         
         // Test with threshold = 0.0 (all matches)
         let allResults = try await vectura.search(query: "completely different", threshold: 0.0)

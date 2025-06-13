@@ -23,4 +23,4 @@ public extension VecturaModelSource {
         case .folder(let url): url.path(percentEncoded: false)
         }
     }
-}
+} 

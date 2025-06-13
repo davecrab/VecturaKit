@@ -58,4 +58,4 @@ public struct VecturaConfig {
     self.dimension = dimension
     self.searchOptions = searchOptions
   }
-}
+} 

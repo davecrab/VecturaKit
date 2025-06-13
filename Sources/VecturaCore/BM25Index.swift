@@ -107,4 +107,4 @@ public struct BM25Index {
                 .filter { $0 == term }
                 .count)
     }
-}
+} 

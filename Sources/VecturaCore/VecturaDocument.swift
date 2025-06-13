@@ -63,4 +63,4 @@ public struct VecturaDocument: Identifiable, Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, text, embedding, createdAt, metadata
     }
-}
+} 

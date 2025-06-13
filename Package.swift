@@ -21,6 +21,14 @@ let package = Package(
       name: "VecturaMLXKit",
       targets: ["VecturaMLXKit"]
     ),
+    .library(
+      name: "VecturaExternalKit",
+      targets: ["VecturaExternalKit"]
+    ),
+    .library(
+      name: "VecturaCore",
+      targets: ["VecturaCore"]
+    ),
     .executable(
       name: "vectura-cli",
       targets: ["VecturaCLI"]
@@ -28,6 +36,10 @@ let package = Package(
     .executable(
       name: "vectura-mlx-cli",
       targets: ["VecturaMLXCLI"]
+    ),
+    .executable(
+      name: "vectura-external-cli",
+      targets: ["VecturaExternalCLI"]
     ),
   ],
   dependencies: [
@@ -37,21 +49,30 @@ let package = Package(
   ],
   targets: [
     .target(
-      name: "VecturaKit",
-      dependencies: [
-        .product(name: "Embeddings", package: "swift-embeddings")
-      ],
+      name: "VecturaCore",
+      dependencies: [],
       cSettings: [
         .define("ACCELERATE_NEW_LAPACK"),
         .define("ACCELERATE_LAPACK_ILP64"),
       ]
     ),
     .target(
+      name: "VecturaKit",
+      dependencies: [
+        "VecturaCore",
+        .product(name: "Embeddings", package: "swift-embeddings")
+      ]
+    ),
+    .target(
       name: "VecturaMLXKit",
       dependencies: [
-        "VecturaKit",
+        "VecturaCore",
         .product(name: "MLXEmbedders", package: "mlx-swift-examples"),
       ]
+    ),
+    .target(
+      name: "VecturaExternalKit",
+      dependencies: ["VecturaCore"]
     ),
     .executableTarget(
       name: "VecturaCLI",
@@ -67,6 +88,13 @@ let package = Package(
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ]
     ),
+    .executableTarget(
+      name: "VecturaExternalCLI",
+      dependencies: [
+        "VecturaExternalKit",
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
+      ]
+    ),
     .testTarget(
       name: "VecturaKitTests",
       dependencies: ["VecturaKit"]
@@ -74,6 +102,10 @@ let package = Package(
     .testTarget(
       name: "VecturaMLXKitTests",
       dependencies: ["VecturaMLXKit"]
+    ),
+    .testTarget(
+      name: "VecturaExternalKitTests",
+      dependencies: ["VecturaExternalKit"]
     ),
   ]
 )

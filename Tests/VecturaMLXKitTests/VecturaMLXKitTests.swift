@@ -2,6 +2,7 @@ import XCTest
 import Foundation
 @testable import VecturaMLXKit
 @testable import VecturaKit
+@testable import VecturaCore
 
 @available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
 final class VecturaMLXKitTests: XCTestCase {
