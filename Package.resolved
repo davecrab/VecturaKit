@@ -1,5 +1,5 @@
 {
-  "originHash" : "7335682b117c0c0972dfa93dcff81c388255794833e1d256a430634ac3644013",
+  "originHash" : "05a6ffb6e9936306842ba8d79d3225359c0f108e2abd382ae579dd795f9c0474",
   "pins" : [
     {
       "identity" : "gzipswift",
@@ -13,10 +13,10 @@
     {
       "identity" : "jinja",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/maiqingqiang/Jinja",
+      "location" : "https://github.com/johnmai-dev/Jinja",
       "state" : {
-        "revision" : "6dbe4c449469fb586d0f7339f900f0dd4d78b167",
-        "version" : "1.0.6"
+        "revision" : "fc1233dea1142897d474bda2f1f9a6c3fe7acab6",
+        "version" : "1.2.1"
       }
     },
     {
@@ -24,17 +24,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift",
       "state" : {
-        "revision" : "70dbb62128a5a1471a5ab80363430adb33470cab",
-        "version" : "0.21.2"
+        "revision" : "96c0f69cf15f38abd6248bb71fca908171dab1d8",
+        "version" : "0.25.6"
       }
     },
     {
       "identity" : "mlx-swift-examples",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ml-explore/mlx-swift-examples/",
+      "location" : "https://github.com/davecrab/mlx-swift-examples",
       "state" : {
         "branch" : "main",
-        "revision" : "2f1928ba903b557eedda90202271785a1f4b233d"
+        "revision" : "b30ac0e53959848656c655364429ce30da3d46c5"
       }
     },
     {
@@ -47,12 +47,21 @@
       }
     },
     {
+      "identity" : "swift-collections",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-collections.git",
+      "state" : {
+        "revision" : "c1805596154bb3a265fd91b8ac0c4433b4348fb0",
+        "version" : "1.2.0"
+      }
+    },
+    {
       "identity" : "swift-embeddings",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jkrukowski/swift-embeddings.git",
       "state" : {
-        "revision" : "419c52ea50238435218c587e3bebfe290ee91287",
-        "version" : "0.0.13"
+        "revision" : "fb9f15a631ec4bfac9e18857c19b5020302c8889",
+        "version" : "0.0.19"
       }
     },
     {
@@ -60,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-numerics",
       "state" : {
-        "revision" : "0a5bc04095a675662cf24757cc0640aa2204253b",
-        "version" : "1.0.2"
+        "revision" : "e0ec0f5f3af6f3e4d5e7a19d2af26b481acb6ba8",
+        "version" : "1.0.3"
       }
     },
     {
@@ -69,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jkrukowski/swift-safetensors.git",
       "state" : {
-        "revision" : "718b0f38f912e0bf9d92130fa1e1fe2ae5136dd6",
-        "version" : "0.0.7"
+        "revision" : "02f8e83e16c3334aaf55fc64fb0ab12e82f527bc",
+        "version" : "0.0.8"
       }
     },
     {
@@ -87,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-transformers",
       "state" : {
-        "revision" : "d42fdae473c49ea216671da8caae58e102d28709",
-        "version" : "0.1.14"
+        "revision" : "e5bf0627bd134cf8ddc407cda403ae84207af959",
+        "version" : "0.1.22"
       }
     }
   ],
