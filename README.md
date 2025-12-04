@@ -1,6 +1,8 @@
 # VecturaKitLite
 
-A lightweight Swift package providing a vector database implementation for use with pre-computed embeddings. This is a streamlined fork that focuses on storage and search capabilities without built-in embedding generation.
+A lightweight Swift package providing a vector database implementation for use with pre-computed embeddings. This is a streamlined fork of [VecturaKit](https://github.com/rryam/VecturaKit) by [@rryam](https://github.com/rryam) that focuses on storage and search capabilities without built-in embedding generation.
+
+> **Looking for built-in embedding generation?** If you don't have or want to use an external embedding provider, check out the original [VecturaKit](https://github.com/rryam/VecturaKit) which includes support for swift-embeddings and MLX-based embedding generation.
 
 ## Overview
 
@@ -103,28 +105,10 @@ swift run vectura-cli reset
 - ✅ Minimal dependencies
 - ✅ Lower platform requirements (macOS 14+, iOS 17+)
 
-## Integration with SwiftAIKit
 
-VecturaKitLite is designed to work seamlessly with SwiftAIKit for embedding generation:
+## Acknowledgments
 
-```swift
-import SwiftAIKit
-import VecturaExternalKit
-import VecturaCore
-
-// Generate embeddings with SwiftAIKit
-let aiKit = SwiftAIKit()
-let embeddings = try await aiKit.generateEmbeddings(texts: ["Hello world", "AI is amazing"])
-
-// Store in VecturaKitLite
-let config = VecturaConfig(name: "my-db", dimension: embeddings[0].count)
-let vectorDB = try await VecturaExternalKit(config: config)
-
-let ids = try await vectorDB.addDocumentsWithEmbeddings(
-    texts: ["Hello world", "AI is amazing"],
-    embeddings: embeddings
-)
-```
+This project is a fork of [VecturaKit](https://github.com/rryam/VecturaKit) created by [Rudrank Riyam (@rryam)](https://github.com/rryam). The original VecturaKit provides a full-featured vector database with built-in embedding generation using swift-embeddings and MLX. VecturaKitLite strips out the embedding generation to provide a minimal, dependency-light version for use with external embedding providers.
 
 ## License
 
