@@ -1,3 +1,0 @@
-This is the first chunk.
-This is the second chunk, which is a bit longer and should be split if the chunk size is small.
-This is the third chunk, and it is the last one in this file.

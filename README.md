@@ -1,78 +1,59 @@
-# VecturaKit
+# VecturaKitLite
 
-A Swift package providing vector database implementations with different embedding capabilities and platform requirements.
+A lightweight Swift package providing a vector database implementation for use with pre-computed embeddings. This is a streamlined fork that focuses on storage and search capabilities without built-in embedding generation.
 
 ## Overview
 
-VecturaKit is now organized into multiple libraries to support different embedding approaches and minimize platform version requirements:
+VecturaKitLite is designed to work with external embedding providers (like SwiftAIKit) and provides efficient vector storage and similarity search capabilities.
 
-- **VecturaCore**: Common functionality and protocols (macOS 14+, iOS 17+)
-- **VecturaKit**: Full-featured vector database with swift-embeddings support (macOS 15+, iOS 18+)
-- **VecturaMLXKit**: Vector database using MLX for Apple Silicon optimization (macOS 14+, iOS 17+)
-- **VecturaExternalKit**: Lightweight vector database for pre-computed embeddings (macOS 14+, iOS 17+)
+**Libraries:**
+- **VecturaCore**: Common functionality, protocols, and data structures
+- **VecturaExternalKit**: Vector database implementation for pre-computed embeddings
 
 ## Platform Requirements
 
 | Library | macOS | iOS | tvOS | visionOS | watchOS |
 |---------|-------|-----|------|-----------|---------|
 | VecturaCore | 14.0+ | 17.0+ | 17.0+ | 1.0+ | 10.0+ |
-| VecturaKit | 15.0+ | 18.0+ | 18.0+ | 2.0+ | 11.0+ |
-| VecturaMLXKit | 14.0+ | 17.0+ | 17.0+ | 1.0+ | 10.0+ |
 | VecturaExternalKit | 14.0+ | 17.0+ | 17.0+ | 1.0+ | 10.0+ |
 
-## When to Use Each Library
+## When to Use VecturaKitLite
 
-### VecturaKit
-Use when you need automatic text embedding generation and can target the latest platforms:
-- Includes swift-embeddings for BERT, CLIP, and other transformer models
-- Full feature set including hybrid search
-- Requires macOS 15+ / iOS 18+
-
-### VecturaMLXKit  
-Use when you want optimized performance on Apple Silicon with lower platform requirements:
-- Uses MLX for efficient inference on Apple chips
-- Good balance of features and performance
-- Requires macOS 14+ / iOS 17+
-
-### VecturaExternalKit
-Use when you have pre-computed embeddings and want the lowest platform requirements:
-- Only handles pre-computed embeddings (no embedding generation)
-- Minimal dependencies and platform requirements
-- Perfect for apps that generate embeddings elsewhere
-- Requires macOS 14+ / iOS 17+
+Use VecturaKitLite when:
+- You have an external embedding provider (e.g., SwiftAIKit, OpenAI API, etc.)
+- You want minimal dependencies and lower platform requirements
+- You need efficient vector storage and similarity search
+- You want to decouple embedding generation from vector storage
 
 ## Installation
 
-Add VecturaKit to your Swift package dependencies:
+Add VecturaKitLite to your Swift package dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/rryam/VecturaKit.git", from: "1.0.0")
+    .package(url: "https://github.com/davecrab/VecturaKit.git", branch: "main")
 ]
 ```
 
-Then import the specific library you need:
+Then import the libraries you need:
 
 ```swift
-import VecturaExternalKit  // For pre-computed embeddings
-import VecturaMLXKit      // For MLX-powered embeddings  
-import VecturaKit         // For swift-embeddings
-import VecturaCore        // For shared types only
+import VecturaExternalKit  // For vector database operations
+import VecturaCore         // For shared types (VecturaConfig, etc.)
 ```
 
-## Usage Examples
-
-### VecturaExternalKit (Pre-computed Embeddings)
+## Usage Example
 
 ```swift
 import VecturaExternalKit
 import VecturaCore
 
+// Configure the vector database
 let config = VecturaConfig(name: "my-db", dimension: 384)
 let vectorDB = try await VecturaExternalKit(config: config)
 
-// Add documents with pre-computed embeddings
-let embeddings = [
+// Add documents with pre-computed embeddings (from SwiftAIKit or other provider)
+let embeddings: [[Float]] = [
     [0.1, 0.2, 0.3, ...], // 384-dimensional embedding
     [0.4, 0.5, 0.6, ...]  // Another 384-dimensional embedding
 ]
@@ -84,102 +65,66 @@ let docIds = try await vectorDB.addDocumentsWithEmbeddings(
 )
 
 // Search with a pre-computed query embedding
-let queryEmbedding = [0.1, 0.2, 0.3, ...] // Your query embedding
+let queryEmbedding: [Float] = [0.1, 0.2, 0.3, ...] // Your query embedding
 let results = try await vectorDB.search(
     query: queryEmbedding,
     numResults: 5,
     filter: ["category": "tech"]
 )
+
+for result in results {
+    print("Score: \(result.score), Text: \(result.text)")
+}
 ```
 
-### VecturaMLXKit (MLX Embeddings)
+## Command Line Tool
 
-```swift
-import VecturaMLXKit
-import VecturaCore
-
-let config = VecturaConfig(name: "mlx-db", dimension: 768)
-let vectorDB = try await VecturaMLXKit(config: config)
-
-// Add documents - embeddings generated automatically
-let docIds = try await vectorDB.addDocuments(
-    texts: ["Machine learning document", "AI research paper"],
-    metadatas: [["source": "arxiv"], ["source": "nature"]]
-)
-
-// Search with text - embedding generated automatically
-let results = try await vectorDB.search(
-    query: "artificial intelligence",
-    numResults: 10
-)
-```
-
-### VecturaKit (Swift-Embeddings)
-
-```swift
-import VecturaKit
-import VecturaCore
-
-let config = VecturaConfig(name: "full-db", dimension: 384)
-let vectorDB = try await VecturaKit(config: config)
-
-// Add documents with automatic embedding generation
-let docIds = try await vectorDB.addDocuments(
-    texts: ["Neural networks", "Deep learning"],
-    model: .id("sentence-transformers/all-MiniLM-L6-v2"),
-    metadatas: [["type": "ml"], ["type": "dl"]]
-)
-
-// Also supports pre-computed embeddings
-let precomputedIds = try await vectorDB.addDocumentsWithEmbeddings(
-    texts: ["External embedding"],
-    embeddings: [[0.1, 0.2, 0.3, ...]]
-)
-```
-
-## Command Line Tools
-
-Each library includes a CLI tool for testing and experimentation:
+A CLI tool is included for testing and experimentation:
 
 ```bash
-# VecturaExternalKit CLI
-swift run vectura-external-cli mock --count 10 --dimension 384
-swift run vectura-external-cli search --embedding="0.1,0.2,0.3,..."
+# Add mock data with random embeddings
+swift run vectura-cli mock --count 10 --dimension 384
 
-# VecturaMLXKit CLI  
-swift run vectura-mlx-cli add "Machine learning text"
-swift run vectura-mlx-cli search "AI research"
+# Search with an embedding
+swift run vectura-cli search --embedding="0.1,0.2,0.3,..."
 
-# VecturaKit CLI
-swift run vectura-cli add "Neural networks" --model-id "sentence-transformers/all-MiniLM-L6-v2"
-swift run vectura-cli search "deep learning"
+# Reset the database
+swift run vectura-cli reset
 ```
-
-## Architecture
-
-The new modular architecture separates concerns:
-
-- **VecturaCore**: Contains shared protocols, data structures, and utilities
-- **VecturaExternalKit**: Minimal implementation for pre-computed embeddings
-- **VecturaMLXKit**: MLX-based embedding generation for Apple Silicon
-- **VecturaKit**: Full-featured implementation with swift-embeddings
-
-This allows you to choose the right balance of features vs. platform requirements for your use case.
 
 ## Features
 
-All libraries support:
 - ✅ Vector similarity search with cosine similarity
 - ✅ Metadata filtering
 - ✅ Batch operations
 - ✅ Persistent storage (JSON files)
 - ✅ Hybrid search (vector + BM25 text search)
 - ✅ Configurable search options
+- ✅ Minimal dependencies
+- ✅ Lower platform requirements (macOS 14+, iOS 17+)
 
-Additional features by library:
-- **VecturaKit**: Automatic embedding generation with Transformers
-- **VecturaMLXKit**: Automatic embedding generation optimized for Apple Silicon
-- **VecturaExternalKit**: Lightweight for pre-computed embeddings only
+## Integration with SwiftAIKit
+
+VecturaKitLite is designed to work seamlessly with SwiftAIKit for embedding generation:
+
+```swift
+import SwiftAIKit
+import VecturaExternalKit
+import VecturaCore
+
+// Generate embeddings with SwiftAIKit
+let aiKit = SwiftAIKit()
+let embeddings = try await aiKit.generateEmbeddings(texts: ["Hello world", "AI is amazing"])
+
+// Store in VecturaKitLite
+let config = VecturaConfig(name: "my-db", dimension: embeddings[0].count)
+let vectorDB = try await VecturaExternalKit(config: config)
+
+let ids = try await vectorDB.addDocumentsWithEmbeddings(
+    texts: ["Hello world", "AI is amazing"],
+    embeddings: embeddings
+)
+```
 
 ## License
 
